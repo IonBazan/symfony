@@ -52,5 +52,18 @@
             <tag name="kernel.event_listener" event="kernel.controller" method="onKernelController"/>
             <tag name="data_collector" template="@WebProfiler/Collector/router.html.twig" id="router" priority="285" />
         </service>
+
+        <service id="Symfony\Contracts\HttpClient\HttpClientInterface">
+            <factory class="Symfony\Component\HttpClient\HttpClient" method="create" />
+        </service>
+
+        <service id="traceable_http_client" class="Symfony\Bundle\FrameworkBundle\HttpClient\TraceableHttpClient" decorates="Symfony\Contracts\HttpClient\HttpClientInterface">
+            <argument type="service" id="traceable_http_client.inner" />
+        </service>
+
+        <service id="data_collector.http_client" class="Symfony\Bundle\FrameworkBundle\DataCollector\HttpClientDataCollector">
+            <argument type="service" id="Symfony\Contracts\HttpClient\HttpClientInterface" on-invalid="ignore" />
+            <tag name="data_collector" template="@Framework/Collector/http_client.html.twig" id="http_client" priority="240" />
+        </service>
     </services>
 </container>
