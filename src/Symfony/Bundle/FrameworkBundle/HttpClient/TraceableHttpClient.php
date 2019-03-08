@@ -20,7 +20,6 @@ use Symfony\Component\HttpKernel\KernelInterface;
 use Symfony\Contracts\HttpClient\HttpClientInterface;
 use Symfony\Contracts\HttpClient\ResponseInterface;
 use Symfony\Contracts\HttpClient\ResponseStreamInterface;
-use Symfony\Contracts\HttpClient\Exception\ClientExceptionInterface;
 
 /**
  * AAA
@@ -31,7 +30,7 @@ class TraceableHttpClient implements HttpClientInterface
 {
     protected $httpClient;
     protected $traces = [];
-    
+
     /**
      * @param HttpClientInterface $httpClient A HttpClientInterface instance
      */
@@ -39,45 +38,29 @@ class TraceableHttpClient implements HttpClientInterface
     {
         $this->httpClient = $httpClient;
     }
-    
+
     /**
      * {@inheritdoc}
      */
     public function request(string $method, string $url, array $options = []): ResponseInterface
     {
-        try {
-            $response = $this->httpClient->request($method, $url, $options);
-            
-            $this->traces[] = [
-                'request' => [
-                    'method' => $method,
-                    'url' => $url,
-                    'options' => $options,
-                ],
-                'response' => [
-                    'statusCode' => $response->getStatusCode(),
-                    'headers' => $response->getHeaders(),
-                ],
-            ];
-            
-            return $response;
-        } catch (ClientExceptionInterface $e) {
-            $this->traces[] = [
-                'request' => [
-                    'method' => $method,
-                    'url' => $url,
-                    'options' => $options,
-                ],
-                'response' => [
-                    'statusCode' => $e->getCode(),
-                    'headers' => [],
-                ],
-            ];
+        $response = $this->httpClient->request($method, $url, $options);
 
-            throw $e;
-        }
+        $this->traces[] = [
+            'request' => [
+                'method' => $method,
+                'url' => $url,
+                'options' => $options,
+            ],
+            'response' => [
+                'statusCode' => $response->getStatusCode(),
+                'headers' => $response->getHeaders(false),
+            ],
+        ];
+
+        return $response;
     }
-    
+
     /**
      * {@inheritdoc}
      */
@@ -85,7 +68,7 @@ class TraceableHttpClient implements HttpClientInterface
     {
         $this->httpClient->stream($responses, $timeout);
     }
-    
+
     public function getTraces(): array
     {
         return $this->traces;
