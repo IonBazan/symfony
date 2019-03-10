@@ -11,19 +11,11 @@
 
 namespace Symfony\Bundle\FrameworkBundle\HttpClient;
 
-use Symfony\Component\HttpFoundation\Request;
-use Symfony\Component\HttpFoundation\Response;
-use Symfony\Component\HttpKernel\HttpCache\Esi;
-use Symfony\Component\HttpKernel\HttpCache\HttpCache as BaseHttpCache;
-use Symfony\Component\HttpKernel\HttpCache\Store;
-use Symfony\Component\HttpKernel\KernelInterface;
 use Symfony\Contracts\HttpClient\HttpClientInterface;
 use Symfony\Contracts\HttpClient\ResponseInterface;
 use Symfony\Contracts\HttpClient\ResponseStreamInterface;
 
 /**
- * AAA
- *
  * @author Jérémy Romey <jeremy@free-agent.fr>
  */
 class TraceableHttpClient implements HttpClientInterface
