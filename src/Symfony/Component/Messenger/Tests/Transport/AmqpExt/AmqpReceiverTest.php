@@ -14,10 +14,11 @@ namespace Symfony\Component\Messenger\Tests\Transport\AmqpExt;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Tests\Fixtures\DummyMessage;
+use Symfony\Component\Messenger\Transport\AmqpExt\AmqpReceivedStamp;
 use Symfony\Component\Messenger\Transport\AmqpExt\AmqpReceiver;
 use Symfony\Component\Messenger\Transport\AmqpExt\Connection;
-use Symfony\Component\Messenger\Transport\AmqpExt\Exception\RejectMessageExceptionInterface;
 use Symfony\Component\Messenger\Transport\Serialization\Serializer;
+use Symfony\Component\Messenger\Transport\Serialization\SerializerInterface;
 use Symfony\Component\Serializer as SerializerComponent;
 use Symfony\Component\Serializer\Encoder\JsonEncoder;
 use Symfony\Component\Serializer\Normalizer\ObjectNormalizer;
@@ -27,79 +28,20 @@ use Symfony\Component\Serializer\Normalizer\ObjectNormalizer;
  */
 class AmqpReceiverTest extends TestCase
 {
-    public function testItSendTheDecodedMessageToTheHandlerAndAcknowledgeIt()
+    public function testItReturnsTheDecodedMessageToTheHandler()
     {
         $serializer = new Serializer(
             new SerializerComponent\Serializer([new ObjectNormalizer()], ['json' => new JsonEncoder()])
         );
 
-        $envelope = $this->getMockBuilder(\AMQPEnvelope::class)->getMock();
-        $envelope->method('getBody')->willReturn('{"message": "Hi"}');
-        $envelope->method('getHeaders')->willReturn([
-            'type' => DummyMessage::class,
-        ]);
-
+        $amqpEnvelope = $this->createAMQPEnvelope();
         $connection = $this->getMockBuilder(Connection::class)->disableOriginalConstructor()->getMock();
-        $connection->method('get')->willReturn($envelope);
-
-        $connection->expects($this->once())->method('ack')->with($envelope);
+        $connection->method('get')->willReturn($amqpEnvelope);
 
         $receiver = new AmqpReceiver($connection, $serializer);
-        $receiver->receive(function (?Envelope $envelope) use ($receiver) {
-            $this->assertEquals(new DummyMessage('Hi'), $envelope->getMessage());
-            $receiver->stop();
-        });
-    }
-
-    /**
-     * @expectedException \Symfony\Component\Messenger\Tests\Transport\AmqpExt\InterruptException
-     */
-    public function testItNonAcknowledgeTheMessageIfAnExceptionHappened()
-    {
-        $serializer = new Serializer(
-            new SerializerComponent\Serializer([new ObjectNormalizer()], ['json' => new JsonEncoder()])
-        );
-
-        $envelope = $this->getMockBuilder(\AMQPEnvelope::class)->getMock();
-        $envelope->method('getBody')->willReturn('{"message": "Hi"}');
-        $envelope->method('getHeaders')->willReturn([
-            'type' => DummyMessage::class,
-        ]);
-
-        $connection = $this->getMockBuilder(Connection::class)->disableOriginalConstructor()->getMock();
-        $connection->method('get')->willReturn($envelope);
-
-        $connection->expects($this->once())->method('nack')->with($envelope);
-
-        $receiver = new AmqpReceiver($connection, $serializer);
-        $receiver->receive(function () {
-            throw new InterruptException('Well...');
-        });
-    }
-
-    /**
-     * @expectedException \Symfony\Component\Messenger\Tests\Transport\AmqpExt\WillNeverWorkException
-     */
-    public function testItRejectsTheMessageIfTheExceptionIsARejectMessageExceptionInterface()
-    {
-        $serializer = new Serializer(
-            new SerializerComponent\Serializer([new ObjectNormalizer()], ['json' => new JsonEncoder()])
-        );
-
-        $envelope = $this->getMockBuilder(\AMQPEnvelope::class)->getMock();
-        $envelope->method('getBody')->willReturn('{"message": "Hi"}');
-        $envelope->method('getHeaders')->willReturn([
-            'type' => DummyMessage::class,
-        ]);
-
-        $connection = $this->getMockBuilder(Connection::class)->disableOriginalConstructor()->getMock();
-        $connection->method('get')->willReturn($envelope);
-        $connection->expects($this->once())->method('reject')->with($envelope);
-
-        $receiver = new AmqpReceiver($connection, $serializer);
-        $receiver->receive(function () {
-            throw new WillNeverWorkException('Well...');
-        });
+        $actualEnvelopes = iterator_to_array($receiver->get());
+        $this->assertCount(1, $actualEnvelopes);
+        $this->assertEquals(new DummyMessage('Hi'), $actualEnvelopes[0]->getMessage());
     }
 
     /**
@@ -107,25 +49,14 @@ class AmqpReceiverTest extends TestCase
      */
     public function testItThrowsATransportExceptionIfItCannotAcknowledgeMessage()
     {
-        $serializer = new Serializer(
-            new SerializerComponent\Serializer([new ObjectNormalizer()], ['json' => new JsonEncoder()])
-        );
-
-        $envelope = $this->getMockBuilder(\AMQPEnvelope::class)->getMock();
-        $envelope->method('getBody')->willReturn('{"message": "Hi"}');
-        $envelope->method('getHeaders')->willReturn([
-            'type' => DummyMessage::class,
-        ]);
-
+        $serializer = $this->createMock(SerializerInterface::class);
+        $amqpEnvelope = $this->createAMQPEnvelope();
         $connection = $this->getMockBuilder(Connection::class)->disableOriginalConstructor()->getMock();
-        $connection->method('get')->willReturn($envelope);
-
-        $connection->method('ack')->with($envelope)->willThrowException(new \AMQPException());
+        $connection->method('get')->willReturn($amqpEnvelope);
+        $connection->method('ack')->with($amqpEnvelope)->willThrowException(new \AMQPException());
 
         $receiver = new AmqpReceiver($connection, $serializer);
-        $receiver->receive(function (?Envelope $envelope) use ($receiver) {
-            $receiver->stop();
-        });
+        $receiver->ack(new Envelope(new \stdClass(), [new AmqpReceivedStamp($amqpEnvelope)]));
     }
 
     /**
@@ -133,57 +64,24 @@ class AmqpReceiverTest extends TestCase
      */
     public function testItThrowsATransportExceptionIfItCannotRejectMessage()
     {
-        $serializer = new Serializer(
-            new SerializerComponent\Serializer([new ObjectNormalizer()], ['json' => new JsonEncoder()])
-        );
-
-        $envelope = $this->getMockBuilder(\AMQPEnvelope::class)->getMock();
-        $envelope->method('getBody')->willReturn('{"message": "Hi"}');
-        $envelope->method('getHeaders')->willReturn([
-            'type' => DummyMessage::class,
-        ]);
-
+        $serializer = $this->createMock(SerializerInterface::class);
+        $amqpEnvelope = $this->createAMQPEnvelope();
         $connection = $this->getMockBuilder(Connection::class)->disableOriginalConstructor()->getMock();
-        $connection->method('get')->willReturn($envelope);
-        $connection->method('reject')->with($envelope)->willThrowException(new \AMQPException());
+        $connection->method('get')->willReturn($amqpEnvelope);
+        $connection->method('nack')->with($amqpEnvelope, AMQP_NOPARAM)->willThrowException(new \AMQPException());
 
         $receiver = new AmqpReceiver($connection, $serializer);
-        $receiver->receive(function () {
-            throw new WillNeverWorkException('Well...');
-        });
+        $receiver->reject(new Envelope(new \stdClass(), [new AmqpReceivedStamp($amqpEnvelope)]));
     }
 
-    /**
-     * @expectedException \Symfony\Component\Messenger\Exception\TransportException
-     */
-    public function testItThrowsATransportExceptionIfItCannotNonAcknowledgeMessage()
+    private function createAMQPEnvelope()
     {
-        $serializer = new Serializer(
-            new SerializerComponent\Serializer([new ObjectNormalizer()], ['json' => new JsonEncoder()])
-        );
-
         $envelope = $this->getMockBuilder(\AMQPEnvelope::class)->getMock();
         $envelope->method('getBody')->willReturn('{"message": "Hi"}');
         $envelope->method('getHeaders')->willReturn([
             'type' => DummyMessage::class,
         ]);
 
-        $connection = $this->getMockBuilder(Connection::class)->disableOriginalConstructor()->getMock();
-        $connection->method('get')->willReturn($envelope);
-
-        $connection->method('nack')->with($envelope)->willThrowException(new \AMQPException());
-
-        $receiver = new AmqpReceiver($connection, $serializer);
-        $receiver->receive(function () {
-            throw new InterruptException('Well...');
-        });
+        return $envelope;
     }
-}
-
-class InterruptException extends \Exception
-{
-}
-
-class WillNeverWorkException extends \Exception implements RejectMessageExceptionInterface
-{
 }

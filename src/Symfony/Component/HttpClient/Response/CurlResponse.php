@@ -11,6 +11,7 @@
 
 namespace Symfony\Component\HttpClient\Response;
 
+use Psr\Log\LoggerInterface;
 use Symfony\Component\HttpClient\Chunk\FirstChunk;
 use Symfony\Component\HttpClient\Exception\TransportException;
 use Symfony\Contracts\HttpClient\ResponseInterface;
@@ -29,7 +30,7 @@ final class CurlResponse implements ResponseInterface
     /**
      * @internal
      */
-    public function __construct(\stdClass $multi, $ch, array $options = null, callable $resolveRedirect = null)
+    public function __construct(\stdClass $multi, $ch, array $options = null, LoggerInterface $logger = null, string $method = 'GET', callable $resolveRedirect = null)
     {
         $this->multi = $multi;
 
@@ -41,12 +42,15 @@ final class CurlResponse implements ResponseInterface
         }
 
         $this->id = $id = (int) $ch;
+        $this->logger = $logger;
         $this->timeout = $options['timeout'] ?? null;
+        $this->info['http_method'] = $method;
         $this->info['user_data'] = $options['user_data'] ?? null;
         $this->info['start_time'] = $this->info['start_time'] ?? microtime(true);
         $info = &$this->info;
+        $headers = &$this->headers;
 
-        if (!$info['raw_headers']) {
+        if (!$info['response_headers']) {
             // Used to keep track of what we're waiting for
             curl_setopt($ch, CURLOPT_PRIVATE, 'headers');
         }
@@ -62,8 +66,8 @@ final class CurlResponse implements ResponseInterface
             $content = ($options['buffer'] ?? true) ? $content : null;
         }
 
-        curl_setopt($ch, CURLOPT_HEADERFUNCTION, static function ($ch, string $data) use (&$info, $options, $multi, $id, &$location, $resolveRedirect): int {
-            return self::parseHeaderLine($ch, $data, $info, $options, $multi, $id, $location, $resolveRedirect);
+        curl_setopt($ch, CURLOPT_HEADERFUNCTION, static function ($ch, string $data) use (&$info, &$headers, $options, $multi, $id, &$location, $resolveRedirect, $logger): int {
+            return self::parseHeaderLine($ch, $data, $info, $headers, $options, $multi, $id, $location, $resolveRedirect, $logger);
         });
 
         if (null === $options) {
@@ -78,11 +82,12 @@ final class CurlResponse implements ResponseInterface
         if ($onProgress = $options['on_progress']) {
             $url = isset($info['url']) ? ['url' => $info['url']] : [];
             curl_setopt($ch, CURLOPT_NOPROGRESS, false);
-            curl_setopt($ch, CURLOPT_PROGRESSFUNCTION, static function ($ch, $dlSize, $dlNow) use ($onProgress, &$info, $url) {
+            curl_setopt($ch, CURLOPT_PROGRESSFUNCTION, static function ($ch, $dlSize, $dlNow) use ($onProgress, &$info, $url, $multi) {
                 try {
                     $onProgress($dlNow, $dlSize, $url + curl_getinfo($ch) + $info);
                 } catch (\Throwable $e) {
-                    $info['error'] = $e;
+                    $multi->handlesActivity[(int) $ch][] = null;
+                    $multi->handlesActivity[(int) $ch][] = $e;
 
                     return 1; // Abort the request
                 }
@@ -100,24 +105,27 @@ final class CurlResponse implements ResponseInterface
                 throw new TransportException($response->info['error']);
             }
 
-            if (\in_array(curl_getinfo($ch = $response->handle, CURLINFO_PRIVATE), ['headers', 'destruct'], true)) {
+            $waitFor = curl_getinfo($ch = $response->handle, CURLINFO_PRIVATE);
+
+            if (\in_array($waitFor, ['headers', 'destruct'], true)) {
                 try {
                     if (\defined('CURLOPT_STREAM_WEIGHT')) {
                         curl_setopt($ch, CURLOPT_STREAM_WEIGHT, 32);
                     }
                     self::stream([$response])->current();
                 } catch (\Throwable $e) {
+                    // Persist timeouts thrown during initialization
                     $response->info['error'] = $e->getMessage();
                     $response->close();
                     throw $e;
                 }
+            } elseif ('content' === $waitFor && ($response->multi->handlesActivity[$response->id][0] ?? null) instanceof FirstChunk) {
+                self::stream([$response])->current();
             }
 
             curl_setopt($ch, CURLOPT_HEADERFUNCTION, null);
             curl_setopt($ch, CURLOPT_READFUNCTION, null);
             curl_setopt($ch, CURLOPT_INFILE, null);
-
-            $response->addRawHeaders($response->info['raw_headers']);
         };
 
         // Schedule the request in a non-blocking way
@@ -154,8 +162,8 @@ final class CurlResponse implements ResponseInterface
     public function __destruct()
     {
         try {
-            if (null === $this->timeout || isset($this->info['url'])) {
-                return; // pushed response
+            if (null === $this->timeout) {
+                return; // Unused pushed response
             }
 
             if ('content' === $waitFor = curl_getinfo($this->handle, CURLINFO_PRIVATE)) {
@@ -169,7 +177,13 @@ final class CurlResponse implements ResponseInterface
             $this->close();
 
             // Clear local caches when the only remaining handles are about pushed responses
-            if (\count($this->multi->openHandles) === \count($this->multi->pushedResponses)) {
+            if (!$this->multi->openHandles) {
+                if ($this->logger) {
+                    foreach ($this->multi->pushedResponses as $url => $response) {
+                        $this->logger->debug(sprintf('Unused pushed response: "%s"', $url));
+                    }
+                }
+
                 $this->multi->pushedResponses = [];
                 // Schedule DNS cache eviction for the next request
                 $this->multi->dnsCache[2] = $this->multi->dnsCache[2] ?: $this->multi->dnsCache[1];
@@ -201,12 +215,16 @@ final class CurlResponse implements ResponseInterface
      */
     protected static function schedule(self $response, array &$runningResponses): void
     {
-        if ('' === curl_getinfo($ch = $response->handle, CURLINFO_PRIVATE)) {
-            // no-op - response already completed
-        } elseif (isset($runningResponses[$i = (int) $response->multi->handle])) {
+        if (isset($runningResponses[$i = (int) $response->multi->handle])) {
             $runningResponses[$i][1][$response->id] = $response;
         } else {
             $runningResponses[$i] = [$response->multi, [$response->id => $response]];
+        }
+
+        if ('' === curl_getinfo($ch = $response->handle, CURLINFO_PRIVATE)) {
+            // Response already completed
+            $response->multi->handlesActivity[$response->id][] = null;
+            $response->multi->handlesActivity[$response->id][] = null !== $response->info['error'] ? new TransportException($response->info['error']) : null;
         }
     }
 
@@ -225,7 +243,7 @@ final class CurlResponse implements ResponseInterface
 
             while ($info = curl_multi_info_read($multi->handle)) {
                 $multi->handlesActivity[(int) $info['handle']][] = null;
-                $multi->handlesActivity[(int) $info['handle']][] = \in_array($info['result'], [\CURLE_OK, \CURLE_TOO_MANY_REDIRECTS], true) ? null : new TransportException(curl_error($info['handle']));
+                $multi->handlesActivity[(int) $info['handle']][] = \in_array($info['result'], [\CURLE_OK, \CURLE_TOO_MANY_REDIRECTS], true) || (\CURLE_WRITE_ERROR === $info['result'] && 'destruct' === @curl_getinfo($info['handle'], CURLINFO_PRIVATE)) ? null : new TransportException(curl_error($info['handle']));
             }
         } finally {
             self::$performing = false;
@@ -243,7 +261,7 @@ final class CurlResponse implements ResponseInterface
     /**
      * Parses header lines as curl yields them to us.
      */
-    private static function parseHeaderLine($ch, string $data, array &$info, ?array $options, \stdClass $multi, int $id, ?string &$location, ?callable $resolveRedirect): int
+    private static function parseHeaderLine($ch, string $data, array &$info, array &$headers, ?array $options, \stdClass $multi, int $id, ?string &$location, ?callable $resolveRedirect, ?LoggerInterface $logger): int
     {
         if (!\in_array($waitFor = @curl_getinfo($ch, CURLINFO_PRIVATE), ['headers', 'destruct'], true)) {
             return \strlen($data); // Ignore HTTP trailers
@@ -251,7 +269,16 @@ final class CurlResponse implements ResponseInterface
 
         if ("\r\n" !== $data) {
             // Regular header line: add it to the list
-            $info['raw_headers'][] = substr($data, 0, -2);
+            self::addResponseHeaders([substr($data, 0, -2)], $info, $headers);
+
+            if (0 === strpos($data, 'HTTP') && 300 <= $info['http_code'] && $info['http_code'] < 400) {
+                if (curl_getinfo($ch, CURLINFO_REDIRECT_COUNT) === $options['max_redirects']) {
+                    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false);
+                } elseif (303 === $info['http_code'] || ('POST' === $info['http_method'] && \in_array($info['http_code'], [301, 302], true))) {
+                    $info['http_method'] = 'HEAD' === $info['http_method'] ? 'HEAD' : 'GET';
+                    curl_setopt($ch, CURLOPT_POSTFIELDS, '');
+                }
+            }
 
             if (0 === stripos($data, 'Location:')) {
                 $location = trim(substr($data, 9, -2));
@@ -291,6 +318,8 @@ final class CurlResponse implements ResponseInterface
             }
 
             curl_setopt($ch, CURLOPT_PRIVATE, 'content');
+        } elseif (null !== $info['redirect_url'] && $logger) {
+            $logger->info(sprintf('Redirecting: "%s %s"', $info['http_code'], $info['redirect_url']));
         }
 
         return \strlen($data);

@@ -34,9 +34,22 @@ class HttpOptions
     /**
      * @return $this
      */
-    public function setAuth(string $userinfo)
+    public function setAuthBasic(string $user, string $password = '')
     {
-        $this->options['auth'] = $userinfo;
+        $this->options['auth_basic'] = $user;
+        if ('' !== $password) {
+            $this->options['auth_basic'] .= ':'.$password;
+        }
+
+        return $this;
+    }
+
+    /**
+     * @return $this
+     */
+    public function setAuthBearer(string $token)
+    {
+        $this->options['auth_bearer'] = $token;
 
         return $this;
     }
@@ -293,6 +306,16 @@ class HttpOptions
     public function capturePeerCertChain(bool $capture)
     {
         $this->options['capture_peer_cert_chain'] = $capture;
+
+        return $this;
+    }
+
+    /**
+     * @return $this
+     */
+    public function setExtra(string $name, $value)
+    {
+        $this->options['extra'][$name] = $value;
 
         return $this;
     }

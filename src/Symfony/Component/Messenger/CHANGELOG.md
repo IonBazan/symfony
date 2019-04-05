@@ -4,17 +4,73 @@ CHANGELOG
 4.3.0
 -----
 
+ * Added optional `MessageCountAwareInterface` that receivers can implement
+   to give information about how many messages are waiting to be processed.
+ * [BC BREAK] The `Envelope::__construct()` signature changed:
+   you can no longer pass an unlimited number of stamps as the second,
+   third, fourth, arguments etc: stamps are now an array passed to the
+   second argument.
+ * [BC BREAK] The `MessageBusInterface::dispatch()` signature changed:
+   a second argument `array $stamps = []` was added.
+ * Added new `messenger:stop-workers` command that sends a signal
+   to stop all `messenger:consume` workers.
+ * [BC BREAK] The `TransportFactoryInterface::createTransport()` signature
+   changed: a required 3rd `SerializerInterface` argument was added.
+ * Added a new `SyncTransport` along with `ForceCallHandlersStamp` to
+   explicitly handle messages synchronously.
+ * Added optional parameter `prefetch_count` in connection configuration, 
+   to setup channel prefetch count.
+ * New classes: `RoutableMessageBus`, `AddBusNameStampMiddleware`
+   and `BusNameStamp` were added, which allow you to add a bus identifier
+   to the `Envelope` then find the correct bus when receiving from
+   the transport. See `ConsumeMessagesCommand`.
+ * The optional `$busNames` constructor argument of the class `ConsumeMessagesCommand` was removed.
+ * [BC BREAK] 3 new methods were added to `ReceiverInterface`:
+   `ack()`, `reject()` and `get()`. The methods `receive()`
+   and `stop()` were removed.
+ * [BC BREAK] Error handling was moved from the receivers into
+   `Worker`. Implementations of `ReceiverInterface::handle()`
+   should now allow all exceptions to be thrown, except for transport
+   exceptions. They should also not retry (e.g. if there's a queue,
+   remove from the queue) if there is a problem decoding the message.
+ * [BC BREAK] `RejectMessageExceptionInterface` was removed and replaced
+   by `Symfony\Component\Messenger\Exception\UnrecoverableMessageHandlingException`,
+   which has the same behavior: a message will not be retried
+ * The default command name for `ConsumeMessagesCommand` was
+   changed from `messenger:consume-messages` to `messenger:consume`
+ * `ConsumeMessagesCommand` has two new optional constructor arguments
+ * [BC BREAK] The first argument to Worker changed from a single
+   `ReceiverInterface` to an array of `ReceiverInterface`.
+ * `Worker` has 3 new optional constructor arguments.
+ * The `Worker` class now handles calling `pcntl_signal_dispatch()` the
+   receiver no longer needs to call this.
+ * The `AmqpSender` will now retry messages using a dead-letter exchange
+   and delayed queues, instead of retrying via `nack()`
+ * Senders now receive the `Envelope` with the `SentStamp` on it. Previously,
+   the `Envelope` was passed to the sender and *then* the `SentStamp`
+   was added.
+ * `SerializerInterface` implementations should now throw a
+   `Symfony\Component\Messenger\Exception\MessageDecodingFailedException`
+   if `decode()` fails for any reason.
+ * [BC BREAK] The default `Serializer` will now throw a
+   `MessageDecodingFailedException` if `decode()` fails, instead
+   of the underlying exceptions from the Serializer component.
  * Added `PhpSerializer` which uses PHP's native `serialize()` and
    `unserialize()` to serialize messages to a transport
-
  * [BC BREAK] If no serializer were passed, the default serializer
    changed from `Serializer` to `PhpSerializer` inside `AmqpReceiver`,
    `AmqpSender`, `AmqpTransport` and `AmqpTransportFactory`.
-
  * Added `TransportException` to mark an exception transport-related
-
  * [BC BREAK] If listening to exceptions while using `AmqpSender` or `AmqpReceiver`, `\AMQPException` is
    no longer thrown in favor of `TransportException`.
+ * Deprecated `LoggingMiddleware`, pass a logger to `SendMessageMiddleware` instead.
+ * [BC BREAK] `Connection::__construct()` and `Connection::fromDsn()`
+   both no longer have `$isDebug` arguments.
+ * [BC BREAK] The Amqp Transport now automatically sets up the exchanges
+   and queues by default. Previously, this was done when in "debug" mode
+   only. Pass the `auto_setup` connection option to control this.
+ * Added a `SetupTransportsCommand` command to setup the transports
+ * Added a Doctrine transport. For example, use the `doctrine://default` DSN (this uses the `default` Doctrine entity manager)
 
 4.2.0
 -----

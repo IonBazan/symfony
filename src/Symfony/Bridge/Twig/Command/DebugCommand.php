@@ -19,7 +19,9 @@ use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Style\SymfonyStyle;
 use Symfony\Component\Finder\Finder;
+use Symfony\Component\HttpKernel\Debug\FileLinkFormatter;
 use Twig\Environment;
+use Twig\Loader\ChainLoader;
 use Twig\Loader\FilesystemLoader;
 
 /**
@@ -36,8 +38,10 @@ class DebugCommand extends Command
     private $bundlesMetadata;
     private $twigDefaultPath;
     private $rootDir;
+    private $filesystemLoaders;
+    private $fileLinkFormatter;
 
-    public function __construct(Environment $twig, string $projectDir = null, array $bundlesMetadata = [], string $twigDefaultPath = null, string $rootDir = null)
+    public function __construct(Environment $twig, string $projectDir = null, array $bundlesMetadata = [], string $twigDefaultPath = null, string $rootDir = null, FileLinkFormatter $fileLinkFormatter = null)
     {
         parent::__construct();
 
@@ -46,6 +50,7 @@ class DebugCommand extends Command
         $this->bundlesMetadata = $bundlesMetadata;
         $this->twigDefaultPath = $twigDefaultPath;
         $this->rootDir = $rootDir;
+        $this->fileLinkFormatter = $fileLinkFormatter;
     }
 
     protected function configure()
@@ -87,7 +92,7 @@ EOF
         $name = $input->getArgument('name');
         $filter = $input->getOption('filter');
 
-        if (null !== $name && !$this->twig->getLoader() instanceof FilesystemLoader) {
+        if (null !== $name && [] === $this->getFilesystemLoaders()) {
             throw new InvalidArgumentException(sprintf('Argument "name" not supported, it requires the Twig loader "%s"', FilesystemLoader::class));
         }
 
@@ -103,16 +108,28 @@ EOF
 
     private function displayPathsText(SymfonyStyle $io, string $name)
     {
-        $files = $this->findTemplateFiles($name);
+        $file = new \ArrayIterator($this->findTemplateFiles($name));
         $paths = $this->getLoaderPaths($name);
 
         $io->section('Matched File');
-        if ($files) {
-            $io->success(array_shift($files));
+        if ($file->valid()) {
+            if ($fileLink = $this->getFileLink($file->key())) {
+                $io->block($file->current(), 'OK', sprintf('fg=black;bg=green;href=%s', $fileLink), ' ', true);
+            } else {
+                $io->success($file->current());
+            }
+            $file->next();
 
-            if ($files) {
+            if ($file->valid()) {
                 $io->section('Overridden Files');
-                $io->listing($files);
+                do {
+                    if ($fileLink = $this->getFileLink($file->key())) {
+                        $io->text(sprintf('* <href=%s>%s</>', $fileLink, $file->current()));
+                    } else {
+                        $io->text(sprintf('* %s', $file->current()));
+                    }
+                    $file->next();
+                } while ($file->valid());
             }
         } else {
             $alternatives = [];
@@ -150,9 +167,11 @@ EOF
                 $message = 'No template paths configured for your application';
             } else {
                 $message = sprintf('No template paths configured for "@%s" namespace', $namespace);
-                $namespaces = $this->twig->getLoader()->getNamespaces();
-                foreach ($this->findAlternatives($namespace, $namespaces) as $namespace) {
-                    $alternatives[] = '@'.$namespace;
+                foreach ($this->getFilesystemLoaders() as $loader) {
+                    $namespaces = $loader->getNamespaces();
+                    foreach ($this->findAlternatives($namespace, $namespaces) as $namespace) {
+                        $alternatives[] = '@'.$namespace;
+                    }
                 }
             }
 
@@ -243,25 +262,25 @@ EOF
 
     private function getLoaderPaths(string $name = null): array
     {
-        /** @var FilesystemLoader $loader */
-        $loader = $this->twig->getLoader();
         $loaderPaths = [];
-        $namespaces = $loader->getNamespaces();
-        if (null !== $name) {
-            $namespace = $this->parseTemplateName($name)[0];
-            $namespaces = array_intersect([$namespace], $namespaces);
-        }
-
-        foreach ($namespaces as $namespace) {
-            $paths = array_map([$this, 'getRelativePath'], $loader->getPaths($namespace));
-
-            if (FilesystemLoader::MAIN_NAMESPACE === $namespace) {
-                $namespace = '(None)';
-            } else {
-                $namespace = '@'.$namespace;
+        foreach ($this->getFilesystemLoaders() as $loader) {
+            $namespaces = $loader->getNamespaces();
+            if (null !== $name) {
+                $namespace = $this->parseTemplateName($name)[0];
+                $namespaces = array_intersect([$namespace], $namespaces);
             }
 
-            $loaderPaths[$namespace] = $paths;
+            foreach ($namespaces as $namespace) {
+                $paths = array_map([$this, 'getRelativePath'], $loader->getPaths($namespace));
+
+                if (FilesystemLoader::MAIN_NAMESPACE === $namespace) {
+                    $namespace = '(None)';
+                } else {
+                    $namespace = '@'.$namespace;
+                }
+
+                $loaderPaths[$namespace] = array_merge($loaderPaths[$namespace] ?? [], $paths);
+            }
         }
 
         return $loaderPaths;
@@ -437,22 +456,22 @@ EOF
 
     private function findTemplateFiles(string $name): array
     {
-        /** @var FilesystemLoader $loader */
-        $loader = $this->twig->getLoader();
-        $files = [];
         list($namespace, $shortname) = $this->parseTemplateName($name);
 
-        foreach ($loader->getPaths($namespace) as $path) {
-            if (!$this->isAbsolutePath($path)) {
-                $path = $this->projectDir.'/'.$path;
-            }
-            $filename = $path.'/'.$shortname;
+        $files = [];
+        foreach ($this->getFilesystemLoaders() as $loader) {
+            foreach ($loader->getPaths($namespace) as $path) {
+                if (!$this->isAbsolutePath($path)) {
+                    $path = $this->projectDir.'/'.$path;
+                }
+                $filename = $path.'/'.$shortname;
 
-            if (is_file($filename)) {
-                if (false !== $realpath = realpath($filename)) {
-                    $files[] = $this->getRelativePath($realpath);
-                } else {
-                    $files[] = $this->getRelativePath($filename);
+                if (is_file($filename)) {
+                    if (false !== $realpath = realpath($filename)) {
+                        $files[$realpath] = $this->getRelativePath($realpath);
+                    } else {
+                        $files[$filename] = $this->getRelativePath($filename);
+                    }
                 }
             }
         }
@@ -534,5 +553,38 @@ EOF
     private function isAbsolutePath(string $file): bool
     {
         return strspn($file, '/\\', 0, 1) || (\strlen($file) > 3 && ctype_alpha($file[0]) && ':' === $file[1] && strspn($file, '/\\', 2, 1)) || null !== parse_url($file, PHP_URL_SCHEME);
+    }
+
+    /**
+     * @return FilesystemLoader[]
+     */
+    private function getFilesystemLoaders(): array
+    {
+        if (null !== $this->filesystemLoaders) {
+            return $this->filesystemLoaders;
+        }
+        $this->filesystemLoaders = [];
+
+        $loader = $this->twig->getLoader();
+        if ($loader instanceof FilesystemLoader) {
+            $this->filesystemLoaders[] = $loader;
+        } elseif ($loader instanceof ChainLoader) {
+            foreach ($loader->getLoaders() as $l) {
+                if ($l instanceof FilesystemLoader) {
+                    $this->filesystemLoaders[] = $l;
+                }
+            }
+        }
+
+        return $this->filesystemLoaders;
+    }
+
+    private function getFileLink(string $absolutePath): string
+    {
+        if (null === $this->fileLinkFormatter) {
+            return '';
+        }
+
+        return (string) $this->fileLinkFormatter->format($absolutePath, 1);
     }
 }

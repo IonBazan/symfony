@@ -20,20 +20,9 @@ use Symfony\Component\Mime\Email;
  */
 class TemplatedEmail extends Email
 {
-    private $template;
     private $htmlTemplate;
     private $textTemplate;
     private $context = [];
-
-    /**
-     * @return $this
-     */
-    public function template(?string $template)
-    {
-        $this->template = $template;
-
-        return $this;
-    }
 
     /**
      * @return $this
@@ -53,11 +42,6 @@ class TemplatedEmail extends Email
         $this->htmlTemplate = $template;
 
         return $this;
-    }
-
-    public function getTemplate(): ?string
-    {
-        return $this->template;
     }
 
     public function getTextTemplate(): ?string
@@ -83,5 +67,23 @@ class TemplatedEmail extends Email
     public function getContext(): array
     {
         return $this->context;
+    }
+
+    /**
+     * @internal
+     */
+    public function __serialize(): array
+    {
+        return [$this->htmlTemplate, $this->textTemplate, $this->context, parent::__serialize()];
+    }
+
+    /**
+     * @internal
+     */
+    public function __unserialize(array $data): void
+    {
+        [$this->htmlTemplate, $this->textTemplate, $this->context, $parentData] = $data;
+
+        parent::__unserialize($parentData);
     }
 }

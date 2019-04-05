@@ -6,14 +6,19 @@ CHANGELOG
 
  * The `Role` and `SwitchUserRole` classes are deprecated and will be removed in 5.0. Use strings for roles
    instead.
- * The `RoleHierarchyInterface` is deprecated and will be removed in 5.0.
- * The `getReachableRoles()` method of the `RoleHierarchy` class is deprecated and will be removed in 5.0.
-   Use the `getReachableRoleNames()` method instead.
+ * The `getReachableRoles()` method of the `RoleHierarchyInterface` is deprecated and will be removed in 5.0.
+   Role hierarchies must implement the `getReachableRoleNames()` method instead and return roles as strings.
  * The `getRoles()` method of the `TokenInterface` is deprecated. Tokens must implement the `getRoleNames()`
    method instead and return roles as strings.
  * Made the `serialize()` and `unserialize()` methods of `AbstractToken` and
   `AuthenticationException` final, use `getState()`/`setState()` instead
  * `AuthenticationException` doesn't implement `Serializable` anymore
+ * Deprecated the `ListenerInterface`, turn your listeners into callables instead
+ * Deprecated `Firewall::handleRequest()`, use `Firewall::callListeners()` instead
+ * Dispatch `AuthenticationSuccessEvent` on `security.authentication.success`
+ * Dispatch `AuthenticationFailureEvent` on `security.authentication.failure`
+ * Dispatch `InteractiveLoginEvent` on `security.interactive_login`
+ * Dispatch `SwitchUserEvent` on `security.switch_user`
 
 4.2.0
 -----

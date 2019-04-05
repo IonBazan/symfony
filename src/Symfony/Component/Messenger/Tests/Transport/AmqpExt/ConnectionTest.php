@@ -128,7 +128,7 @@ class ConnectionTest extends TestCase
                     'alternate-exchange' => 'alternate',
                 ],
             ],
-        ], true, $factory);
+        ], $factory);
         $connection->publish('body');
     }
 
@@ -171,9 +171,11 @@ class ConnectionTest extends TestCase
             $amqpExchange = $this->getMockBuilder(\AMQPExchange::class)->disableOriginalConstructor()->getMock()
         );
 
+        // makes sure the channel looks connected, so it's not re-created
+        $amqpChannel->expects($this->once())->method('isConnected')->willReturn(true);
         $amqpConnection->expects($this->once())->method('connect');
 
-        $connection = Connection::fromDsn('amqp://localhost/%2f/messages', [], false, $factory);
+        $connection = Connection::fromDsn('amqp://localhost/%2f/messages', [], $factory);
         $connection->publish('body');
     }
 
@@ -186,13 +188,15 @@ class ConnectionTest extends TestCase
             $amqpExchange = $this->getMockBuilder(\AMQPExchange::class)->disableOriginalConstructor()->getMock()
         );
 
+        // makes sure the channel looks connected, so it's not re-created
+        $amqpChannel->expects($this->once())->method('isConnected')->willReturn(true);
         $amqpConnection->expects($this->once())->method('pconnect');
 
-        $connection = Connection::fromDsn('amqp://localhost/%2f/messages?persistent=true', [], false, $factory);
+        $connection = Connection::fromDsn('amqp://localhost/%2f/messages?persistent=true', [], $factory);
         $connection->publish('body');
     }
 
-    public function testItSetupsTheConnectionWhenDebug()
+    public function testItSetupsTheConnectionByDefault()
     {
         $factory = new TestAmqpFactory(
             $amqpConnection = $this->getMockBuilder(\AMQPConnection::class)->disableOriginalConstructor()->getMock(),
@@ -206,7 +210,7 @@ class ConnectionTest extends TestCase
         $amqpQueue->expects($this->once())->method('declareQueue');
         $amqpQueue->expects($this->once())->method('bind')->with('exchange_name', 'my_key');
 
-        $connection = Connection::fromDsn('amqp://localhost/%2f/messages?queue[routing_key]=my_key', [], true, $factory);
+        $connection = Connection::fromDsn('amqp://localhost/%2f/messages?queue[routing_key]=my_key', [], $factory);
         $connection->publish('body');
     }
 
@@ -224,13 +228,13 @@ class ConnectionTest extends TestCase
         $amqpQueue->expects($this->never())->method('declareQueue');
         $amqpQueue->expects($this->never())->method('bind');
 
-        $connection = Connection::fromDsn('amqp://localhost/%2f/messages?queue[routing_key]=my_key', ['auto-setup' => 'false'], true, $factory);
+        $connection = Connection::fromDsn('amqp://localhost/%2f/messages?queue[routing_key]=my_key', ['auto_setup' => 'false'], $factory);
         $connection->publish('body');
 
-        $connection = Connection::fromDsn('amqp://localhost/%2f/messages?queue[routing_key]=my_key', ['auto-setup' => false], true, $factory);
+        $connection = Connection::fromDsn('amqp://localhost/%2f/messages?queue[routing_key]=my_key', ['auto_setup' => false], $factory);
         $connection->publish('body');
 
-        $connection = Connection::fromDsn('amqp://localhost/%2f/messages?queue[routing_key]=my_key&auto-setup=false', [], true, $factory);
+        $connection = Connection::fromDsn('amqp://localhost/%2f/messages?queue[routing_key]=my_key&auto_setup=false', [], $factory);
         $connection->publish('body');
     }
 
@@ -248,8 +252,128 @@ class ConnectionTest extends TestCase
         $amqpExchange->expects($this->once())->method('publish')
             ->with('body', null, 1, ['delivery_mode' => 2, 'headers' => ['token' => 'uuid', 'type' => '*']]);
 
-        $connection = Connection::fromDsn('amqp://localhost/%2f/messages?queue[attributes][delivery_mode]=2&queue[attributes][headers][token]=uuid&queue[flags]=1', [], true, $factory);
+        $connection = Connection::fromDsn('amqp://localhost/%2f/messages?queue[attributes][delivery_mode]=2&queue[attributes][headers][token]=uuid&queue[flags]=1', [], $factory);
         $connection->publish('body', $headers);
+    }
+
+    public function testSetChannelPrefetchWhenSetup()
+    {
+        $factory = new TestAmqpFactory(
+            $amqpConnection = $this->createMock(\AMQPConnection::class),
+            $amqpChannel = $this->createMock(\AMQPChannel::class),
+            $amqpQueue = $this->createMock(\AMQPQueue::class),
+            $amqpExchange = $this->createMock(\AMQPExchange::class)
+        );
+
+        // makes sure the channel looks connected, so it's not re-created
+        $amqpChannel->expects($this->exactly(2))->method('isConnected')->willReturn(true);
+
+        $amqpChannel->expects($this->exactly(2))->method('setPrefetchCount')->with(2);
+        $connection = Connection::fromDsn('amqp://localhost/%2f/messages?prefetch_count=2', [], $factory);
+        $connection->setup();
+        $connection = Connection::fromDsn('amqp://localhost/%2f/messages', ['prefetch_count' => 2], $factory);
+        $connection->setup();
+    }
+
+    public function testItDelaysTheMessage()
+    {
+        $amqpConnection = $this->getMockBuilder(\AMQPConnection::class)->disableOriginalConstructor()->getMock();
+        $amqpChannel = $this->getMockBuilder(\AMQPChannel::class)->disableOriginalConstructor()->getMock();
+        $delayQueue = $this->getMockBuilder(\AMQPQueue::class)->disableOriginalConstructor()->getMock();
+
+        $factory = $this->getMockBuilder(AmqpFactory::class)->getMock();
+        $factory->method('createConnection')->willReturn($amqpConnection);
+        $factory->method('createChannel')->willReturn($amqpChannel);
+        $factory->method('createQueue')->willReturn($delayQueue);
+        $factory->method('createExchange')->will($this->onConsecutiveCalls(
+            $delayExchange = $this->getMockBuilder(\AMQPExchange::class)->disableOriginalConstructor()->getMock(),
+            $amqpExchange = $this->getMockBuilder(\AMQPExchange::class)->disableOriginalConstructor()->getMock()
+        ));
+
+        $amqpExchange->expects($this->once())->method('setName')->with('messages');
+        $amqpExchange->method('getName')->willReturn('messages');
+
+        $delayExchange->expects($this->once())->method('setName')->with('delay');
+        $delayExchange->expects($this->once())->method('declareExchange');
+        $delayExchange->method('getName')->willReturn('delay');
+
+        $delayQueue->expects($this->once())->method('setName')->with('delay_queue_5000');
+        $delayQueue->expects($this->once())->method('setArguments')->with([
+            'x-message-ttl' => 5000,
+            'x-dead-letter-exchange' => 'messages',
+        ]);
+
+        $delayQueue->expects($this->once())->method('declareQueue');
+        $delayQueue->expects($this->once())->method('bind')->with('delay', 'delay_5000');
+
+        $delayExchange->expects($this->once())->method('publish')->with('{}', 'delay_5000', AMQP_NOPARAM, ['headers' => ['x-some-headers' => 'foo']]);
+
+        $connection = Connection::fromDsn('amqp://localhost/%2f/messages', [], $factory);
+        $connection->publish('{}', ['x-some-headers' => 'foo'], 5000);
+    }
+
+    public function testItDelaysTheMessageWithADifferentRoutingKeyAndTTLs()
+    {
+        $amqpConnection = $this->getMockBuilder(\AMQPConnection::class)->disableOriginalConstructor()->getMock();
+        $amqpChannel = $this->getMockBuilder(\AMQPChannel::class)->disableOriginalConstructor()->getMock();
+        $delayQueue = $this->getMockBuilder(\AMQPQueue::class)->disableOriginalConstructor()->getMock();
+
+        $factory = $this->getMockBuilder(AmqpFactory::class)->getMock();
+        $factory->method('createConnection')->willReturn($amqpConnection);
+        $factory->method('createChannel')->willReturn($amqpChannel);
+        $factory->method('createQueue')->willReturn($delayQueue);
+        $factory->method('createExchange')->will($this->onConsecutiveCalls(
+            $delayExchange = $this->getMockBuilder(\AMQPExchange::class)->disableOriginalConstructor()->getMock(),
+            $amqpExchange = $this->getMockBuilder(\AMQPExchange::class)->disableOriginalConstructor()->getMock()
+        ));
+
+        $amqpExchange->expects($this->once())->method('setName')->with('messages');
+        $amqpExchange->method('getName')->willReturn('messages');
+
+        $delayExchange->expects($this->once())->method('setName')->with('delay');
+        $delayExchange->expects($this->once())->method('declareExchange');
+        $delayExchange->method('getName')->willReturn('delay');
+
+        $connectionOptions = [
+            'retry' => [
+                'dead_routing_key' => 'my_dead_routing_key',
+            ],
+        ];
+
+        $connection = Connection::fromDsn('amqp://localhost/%2f/messages', $connectionOptions, $factory);
+
+        $delayQueue->expects($this->once())->method('setName')->with('delay_queue_120000');
+        $delayQueue->expects($this->once())->method('setArguments')->with([
+            'x-message-ttl' => 120000,
+            'x-dead-letter-exchange' => 'messages',
+        ]);
+
+        $delayQueue->expects($this->once())->method('declareQueue');
+        $delayQueue->expects($this->once())->method('bind')->with('delay', 'delay_120000');
+
+        $delayExchange->expects($this->once())->method('publish')->with('{}', 'delay_120000', AMQP_NOPARAM, ['headers' => []]);
+        $connection->publish('{}', [], 120000);
+    }
+
+    /**
+     * @expectedException \AMQPException
+     * @expectedExceptionMessage Could not connect to the AMQP server. Please verify the provided DSN. ({"delay":{"routing_key_pattern":"delay_%delay%","exchange_name":"delay","queue_name_pattern":"delay_queue_%delay%"},"host":"localhost","port":5672,"vhost":"\/","login":"user","password":"********"})
+     */
+    public function testObfuscatePasswordInDsn()
+    {
+        $factory = new TestAmqpFactory(
+            $amqpConnection = $this->createMock(\AMQPConnection::class),
+            $amqpChannel = $this->createMock(\AMQPChannel::class),
+            $amqpQueue = $this->createMock(\AMQPQueue::class),
+            $amqpExchange = $this->createMock(\AMQPExchange::class)
+        );
+
+        $amqpConnection->method('connect')->willThrowException(
+            new \AMQPConnectionException('Oups.')
+        );
+
+        $connection = Connection::fromDsn('amqp://user:secretpassword@localhost/%2f/messages', [], $factory);
+        $connection->channel();
     }
 }
 

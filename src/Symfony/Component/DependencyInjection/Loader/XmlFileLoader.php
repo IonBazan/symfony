@@ -317,7 +317,7 @@ class XmlFileLoader extends FileLoader
                     $class = $factory->hasAttribute('class') ? $factory->getAttribute('class') : null;
                 }
 
-                $definition->setFactory([$class, $factory->getAttribute('method')]);
+                $definition->setFactory([$class, $factory->getAttribute('method') ?: '__invoke']);
             }
         }
 
@@ -332,12 +332,12 @@ class XmlFileLoader extends FileLoader
                     $class = $configurator->getAttribute('class');
                 }
 
-                $definition->setConfigurator([$class, $configurator->getAttribute('method')]);
+                $definition->setConfigurator([$class, $configurator->getAttribute('method') ?: '__invoke']);
             }
         }
 
         foreach ($this->getChildren($service, 'call') as $call) {
-            $definition->addMethodCall($call->getAttribute('method'), $this->getArgumentsAsPhp($call, 'argument', $file));
+            $definition->addMethodCall($call->getAttribute('method'), $this->getArgumentsAsPhp($call, 'argument', $file), XmlUtils::phpize($call->getAttribute('returns-clone')));
         }
 
         $tags = $this->getChildren($service, 'tag');
@@ -534,11 +534,19 @@ class XmlFileLoader extends FileLoader
                     }
                     break;
                 case 'tagged':
+                case 'tagged_locator':
+                    $type = $arg->getAttribute('type');
+                    $forLocator = 'tagged_locator' === $type;
+
                     if (!$arg->getAttribute('tag')) {
-                        throw new InvalidArgumentException(sprintf('Tag "<%s>" with type="tagged" has no or empty "tag" attribute in "%s".', $name, $file));
+                        throw new InvalidArgumentException(sprintf('Tag "<%s>" with type="%s" has no or empty "tag" attribute in "%s".', $name, $type, $file));
                     }
 
-                    $arguments[$key] = new TaggedIteratorArgument($arg->getAttribute('tag'), $arg->getAttribute('index-by') ?: null, $arg->getAttribute('default-index-method') ?: null);
+                    $arguments[$key] = new TaggedIteratorArgument($arg->getAttribute('tag'), $arg->getAttribute('index-by') ?: null, $arg->getAttribute('default-index-method') ?: null, $forLocator);
+
+                    if ($forLocator) {
+                        $arguments[$key] = new ServiceLocatorArgument($arguments[$key]);
+                    }
                     break;
                 case 'binary':
                     if (false === $value = base64_decode($arg->nodeValue)) {

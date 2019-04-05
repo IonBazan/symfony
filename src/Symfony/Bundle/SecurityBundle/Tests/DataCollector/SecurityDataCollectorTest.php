@@ -17,10 +17,9 @@ use Symfony\Bundle\SecurityBundle\Debug\TraceableFirewallListener;
 use Symfony\Bundle\SecurityBundle\Security\FirewallConfig;
 use Symfony\Bundle\SecurityBundle\Security\FirewallMap;
 use Symfony\Component\EventDispatcher\EventDispatcher;
-use Symfony\Component\EventDispatcher\EventDispatcherInterface;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
-use Symfony\Component\HttpKernel\Event\GetResponseEvent;
+use Symfony\Component\HttpKernel\Event\RequestEvent;
 use Symfony\Component\HttpKernel\HttpKernelInterface;
 use Symfony\Component\Security\Core\Authentication\Token\Storage\TokenStorage;
 use Symfony\Component\Security\Core\Authentication\Token\SwitchUserToken;
@@ -32,9 +31,9 @@ use Symfony\Component\Security\Core\Authorization\Voter\VoterInterface;
 use Symfony\Component\Security\Core\Role\Role;
 use Symfony\Component\Security\Core\Role\RoleHierarchy;
 use Symfony\Component\Security\Core\Role\SwitchUserRole;
-use Symfony\Component\Security\Http\Firewall\ListenerInterface;
 use Symfony\Component\Security\Http\FirewallMapInterface;
 use Symfony\Component\Security\Http\Logout\LogoutUrlGenerator;
+use Symfony\Contracts\EventDispatcher\EventDispatcherInterface;
 
 class SecurityDataCollectorTest extends TestCase
 {
@@ -221,13 +220,11 @@ class SecurityDataCollectorTest extends TestCase
     public function testGetListeners()
     {
         $request = new Request();
-        $event = new GetResponseEvent($this->getMockBuilder(HttpKernelInterface::class)->getMock(), $request, HttpKernelInterface::MASTER_REQUEST);
+        $event = new RequestEvent($this->getMockBuilder(HttpKernelInterface::class)->getMock(), $request, HttpKernelInterface::MASTER_REQUEST);
         $event->setResponse($response = new Response());
-        $listener = $this->getMockBuilder(ListenerInterface::class)->getMock();
-        $listener
-            ->expects($this->once())
-            ->method('handle')
-            ->with($event);
+        $listener = function ($e) use ($event, &$listenerCalled) {
+            $listenerCalled += $e === $event;
+        };
         $firewallMap = $this
             ->getMockBuilder(FirewallMap::class)
             ->disableOriginalConstructor()
@@ -251,7 +248,7 @@ class SecurityDataCollectorTest extends TestCase
 
         $this->assertNotEmpty($collected = $collector->getListeners()[0]);
         $collector->lateCollect();
-        $this->addToAssertionCount(1);
+        $this->assertSame(1, $listenerCalled);
     }
 
     public function providerCollectDecisionLog(): \Generator

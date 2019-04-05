@@ -44,6 +44,11 @@ class FormValidator extends ConstraintValidator
         if ($form->isSubmitted() && $form->isSynchronized()) {
             // Validate the form data only if transformation succeeded
             $groups = self::getValidationGroups($form);
+
+            if (!$groups) {
+                return;
+            }
+
             $data = $form->getData();
 
             // Validate the data against its own constraints
@@ -113,12 +118,18 @@ class FormValidator extends ConstraintValidator
                     ? (string) $form->getViewData()
                     : \gettype($form->getViewData());
 
+                $failure = $form->getTransformationFailure();
+
                 $this->context->setConstraint($formConstraint);
-                $this->context->buildViolation($config->getOption('invalid_message'))
-                    ->setParameters(array_replace(['{{ value }}' => $clientDataAsString], $config->getOption('invalid_message_parameters')))
+                $this->context->buildViolation($failure->getInvalidMessage() ?? $config->getOption('invalid_message'))
+                    ->setParameters(array_replace(
+                        ['{{ value }}' => $clientDataAsString],
+                        $config->getOption('invalid_message_parameters'),
+                        $failure->getInvalidMessageParameters()
+                    ))
                     ->setInvalidValue($form->getViewData())
                     ->setCode(Form::NOT_SYNCHRONIZED_ERROR)
-                    ->setCause($form->getTransformationFailure())
+                    ->setCause($failure)
                     ->addViolation();
             }
         }

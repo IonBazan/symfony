@@ -220,6 +220,28 @@ class FormValidatorTest extends ConstraintValidatorTestCase
         $this->assertNoViolation();
     }
 
+    public function testDontValidateChildConstraintsIfCallableNoValidationGroups()
+    {
+        $formOptions = [
+            'constraints' => [new Valid()],
+            'validation_groups' => [],
+        ];
+        $form = $this->getBuilder('name', null, $formOptions)
+            ->setCompound(true)
+            ->setDataMapper(new PropertyPathMapper())
+            ->getForm();
+        $childOptions = ['constraints' => [new NotBlank()]];
+        $child = $this->getCompoundForm(new \stdClass(), $childOptions);
+        $form->add($child);
+        $form->submit([]);
+
+        $this->expectNoValidate();
+
+        $this->validator->validate($form, new Form());
+
+        $this->assertNoViolation();
+    }
+
     public function testDontValidateIfNotSynchronized()
     {
         $object = new \stdClass();
@@ -319,6 +341,47 @@ class FormValidatorTest extends ConstraintValidatorTestCase
             ->setCode(Form::NOT_SYNCHRONIZED_ERROR)
             ->setCause($form->getTransformationFailure())
             ->assertRaised();
+    }
+
+    public function testTransformationFailedExceptionInvalidMessageIsUsed()
+    {
+        $object = $this->createMock('\stdClass');
+
+        $form = $this
+            ->getBuilder('name', '\stdClass', [
+                'invalid_message' => 'invalid_message_key',
+                'invalid_message_parameters' => ['{{ foo }}' => 'foo'],
+            ])
+            ->setData($object)
+            ->addViewTransformer(new CallbackTransformer(
+                function ($data) { return $data; },
+                function () {
+                    $failure = new TransformationFailedException();
+                    $failure->setInvalidMessage('safe message to be used', ['{{ bar }}' => 'bar']);
+
+                    throw $failure;
+                }
+            ))
+            ->getForm()
+        ;
+
+        $form->submit('value');
+
+        $this->expectNoValidate();
+
+        $this->validator->validate($form, new Form());
+
+        $this->buildViolation('safe message to be used')
+            ->setParameters([
+                '{{ value }}' => 'value',
+                '{{ foo }}' => 'foo',
+                '{{ bar }}' => 'bar',
+            ])
+            ->setInvalidValue('value')
+            ->setCode(Form::NOT_SYNCHRONIZED_ERROR)
+            ->setCause($form->getTransformationFailure())
+            ->assertRaised()
+        ;
     }
 
     // https://github.com/symfony/symfony/issues/4359

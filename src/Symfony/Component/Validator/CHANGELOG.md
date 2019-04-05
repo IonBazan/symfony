@@ -4,11 +4,18 @@ CHANGELOG
 4.3.0
 -----
 
+ * added `NotPwned` constraint
  * added options `iban` and `ibanPropertyPath` to Bic constraint
  * added UATP cards support to `CardSchemeValidator`
  * added option `allowNull` to NotBlank constraint
  * added `Json` constraint
- 
+ * added `Unique` constraint
+ * added a new `normalizer` option to the string constraints and to the `NotBlank` constraint
+ * added `Positive` constraint
+ * added `PositiveOrZero` constraint
+ * added `Negative` constraint
+ * added `NegativeOrZero` constraint
+
 4.2.0
 -----
 

@@ -12,8 +12,10 @@
 namespace Symfony\Component\Messenger\Transport\AmqpExt;
 
 use Symfony\Component\Messenger\Envelope;
+use Symfony\Component\Messenger\Transport\Receiver\MessageCountAwareInterface;
 use Symfony\Component\Messenger\Transport\Serialization\PhpSerializer;
 use Symfony\Component\Messenger\Transport\Serialization\SerializerInterface;
+use Symfony\Component\Messenger\Transport\SetupableTransportInterface;
 use Symfony\Component\Messenger\Transport\TransportInterface;
 
 /**
@@ -21,7 +23,7 @@ use Symfony\Component\Messenger\Transport\TransportInterface;
  *
  * @experimental in 4.2
  */
-class AmqpTransport implements TransportInterface
+class AmqpTransport implements TransportInterface, SetupableTransportInterface, MessageCountAwareInterface
 {
     private $serializer;
     private $connection;
@@ -37,17 +39,25 @@ class AmqpTransport implements TransportInterface
     /**
      * {@inheritdoc}
      */
-    public function receive(callable $handler): void
+    public function get(): iterable
     {
-        ($this->receiver ?? $this->getReceiver())->receive($handler);
+        return ($this->receiver ?? $this->getReceiver())->get();
     }
 
     /**
      * {@inheritdoc}
      */
-    public function stop(): void
+    public function ack(Envelope $envelope): void
     {
-        ($this->receiver ?? $this->getReceiver())->stop();
+        ($this->receiver ?? $this->getReceiver())->ack($envelope);
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function reject(Envelope $envelope): void
+    {
+        ($this->receiver ?? $this->getReceiver())->reject($envelope);
     }
 
     /**
@@ -56,6 +66,22 @@ class AmqpTransport implements TransportInterface
     public function send(Envelope $envelope): Envelope
     {
         return ($this->sender ?? $this->getSender())->send($envelope);
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function setup(): void
+    {
+        $this->connection->setup();
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function getMessageCount(): int
+    {
+        return ($this->receiver ?? $this->getReceiver())->getMessageCount();
     }
 
     private function getReceiver()

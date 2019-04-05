@@ -20,19 +20,58 @@ use Symfony\Contracts\HttpClient\ResponseInterface;
  */
 trait HttpExceptionTrait
 {
+    private $response;
+
     public function __construct(ResponseInterface $response)
     {
+        $this->response = $response;
         $code = $response->getInfo('http_code');
         $url = $response->getInfo('url');
         $message = sprintf('HTTP %d returned for URL "%s".', $code, $url);
 
-        foreach (array_reverse($response->getInfo('raw_headers')) as $h) {
+        $httpCodeFound = false;
+        $isJson = false;
+        foreach (array_reverse($response->getInfo('response_headers')) as $h) {
             if (0 === strpos($h, 'HTTP/')) {
+                if ($httpCodeFound) {
+                    break;
+                }
+
                 $message = sprintf('%s returned for URL "%s".', $h, $url);
-                break;
+                $httpCodeFound = true;
+            }
+
+            if (0 === stripos($h, 'content-type:')) {
+                if (preg_match('/\bjson\b/i', $h)) {
+                    $isJson = true;
+                }
+
+                if ($httpCodeFound) {
+                    break;
+                }
+            }
+        }
+
+        // Try to guess a better error message using common API error formats
+        // The MIME type isn't explicitly checked because some formats inherit from others
+        // Ex: JSON:API follows RFC 7807 semantics, Hydra can be used in any JSON-LD-compatible format
+        if ($isJson && $body = json_decode($response->getContent(false), true)) {
+            if (isset($body['hydra:title']) || isset($body['hydra:description'])) {
+                // see http://www.hydra-cg.com/spec/latest/core/#description-of-http-status-codes-and-errors
+                $separator = isset($body['hydra:title'], $body['hydra:description']) ? "\n\n" : '';
+                $message = ($body['hydra:title'] ?? '').$separator.($body['hydra:description'] ?? '');
+            } elseif (isset($body['title']) || isset($body['detail'])) {
+                // see RFC 7807 and https://jsonapi.org/format/#error-objects
+                $separator = isset($body['title'], $body['detail']) ? "\n\n" : '';
+                $message = ($body['title'] ?? '').$separator.($body['detail'] ?? '');
             }
         }
 
         parent::__construct($message, $code);
+    }
+
+    public function getResponse(): ResponseInterface
+    {
+        return $this->response;
     }
 }

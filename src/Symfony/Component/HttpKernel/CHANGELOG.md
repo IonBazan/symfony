@@ -4,15 +4,26 @@ CHANGELOG
 4.3.0
 -----
 
+ * renamed `Client` to `HttpKernelBrowser`
  * `KernelInterface` doesn't extend `Serializable` anymore
  * deprecated the `Kernel::serialize()` and `unserialize()` methods
  * increased the priority of `Symfony\Component\HttpKernel\EventListener\AddRequestFormatsListener`
- * made `Symfony\Component\HttpKernel\EventListenerLocaleListener` set the default locale early
+ * made `Symfony\Component\HttpKernel\EventListener\LocaleListener` set the default locale early
+ * deprecated `TranslatorListener` in favor of `LocaleAwareListener`
+ * added the registration of all `LocaleAwareInterface` implementations into the `LocaleAwareListener`
  * made `FileLinkFormatter` final and not implement `Serializable` anymore
  * the base `DataCollector` doesn't implement `Serializable` anymore, you should
    store all the serialized state in the data property instead
  * `DumpDataCollector` has been marked as `final`
  * added an event listener to prevent search engines from indexing applications in debug mode.
+ * renamed `FilterControllerArgumentsEvent` to `ControllerArgumentsEvent`
+ * renamed `FilterControllerEvent` to `ControllerEvent`
+ * renamed `FilterResponseEvent` to `ResponseEvent`
+ * renamed `GetResponseEvent` to `RequestEvent`
+ * renamed `GetResponseForControllerResultEvent` to `ViewEvent`
+ * renamed `GetResponseForExceptionEvent` to `ExceptionEvent`
+ * renamed `PostResponseEvent` to `TerminateEvent`
+ * added `HttpClientKernel` for handling requests with an `HttpClientInterface` instance
 
 4.2.0
 -----

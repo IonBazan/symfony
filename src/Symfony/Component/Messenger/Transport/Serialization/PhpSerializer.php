@@ -12,7 +12,7 @@
 namespace Symfony\Component\Messenger\Transport\Serialization;
 
 use Symfony\Component\Messenger\Envelope;
-use Symfony\Component\Messenger\Exception\InvalidArgumentException;
+use Symfony\Component\Messenger\Exception\MessageDecodingFailedException;
 
 /**
  * @author Ryan Weaver<ryan@symfonycasts.com>
@@ -27,10 +27,16 @@ class PhpSerializer implements SerializerInterface
     public function decode(array $encodedEnvelope): Envelope
     {
         if (empty($encodedEnvelope['body'])) {
-            throw new InvalidArgumentException('Encoded envelope should have at least a "body".');
+            throw new MessageDecodingFailedException('Encoded envelope should have at least a "body".');
         }
 
-        return unserialize($encodedEnvelope['body']);
+        $serializeEnvelope = base64_decode($encodedEnvelope['body']);
+
+        if (false === $serializeEnvelope) {
+            throw new MessageDecodingFailedException('The "body" key could not be base64 decoded.');
+        }
+
+        return $this->safelyUnserialize($serializeEnvelope);
     }
 
     /**
@@ -39,7 +45,38 @@ class PhpSerializer implements SerializerInterface
     public function encode(Envelope $envelope): array
     {
         return [
-            'body' => serialize($envelope),
+            'body' => base64_encode(serialize($envelope)),
         ];
+    }
+
+    private function safelyUnserialize($contents)
+    {
+        $e = null;
+        $signalingException = new MessageDecodingFailedException(sprintf('Could not decode message using PHP serialization: %s.', $contents));
+        $prevUnserializeHandler = ini_set('unserialize_callback_func', self::class.'::handleUnserializeCallback');
+        $prevErrorHandler = set_error_handler(function ($type, $msg, $file, $line, $context = []) use (&$prevErrorHandler, $signalingException) {
+            if (__FILE__ === $file) {
+                throw $signalingException;
+            }
+
+            return $prevErrorHandler ? $prevErrorHandler($type, $msg, $file, $line, $context) : false;
+        });
+
+        try {
+            $meta = unserialize($contents);
+        } finally {
+            restore_error_handler();
+            ini_set('unserialize_callback_func', $prevUnserializeHandler);
+        }
+
+        return $meta;
+    }
+
+    /**
+     * @internal
+     */
+    public static function handleUnserializeCallback($class)
+    {
+        throw new MessageDecodingFailedException(sprintf('Message class "%s" not found during decoding.', $class));
     }
 }

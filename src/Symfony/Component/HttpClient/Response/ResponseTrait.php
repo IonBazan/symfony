@@ -13,8 +13,10 @@ namespace Symfony\Component\HttpClient\Response;
 
 use Symfony\Component\HttpClient\Chunk\DataChunk;
 use Symfony\Component\HttpClient\Chunk\ErrorChunk;
+use Symfony\Component\HttpClient\Chunk\FirstChunk;
 use Symfony\Component\HttpClient\Chunk\LastChunk;
 use Symfony\Component\HttpClient\Exception\ClientException;
+use Symfony\Component\HttpClient\Exception\JsonException;
 use Symfony\Component\HttpClient\Exception\RedirectionException;
 use Symfony\Component\HttpClient\Exception\ServerException;
 use Symfony\Component\HttpClient\Exception\TransportException;
@@ -28,7 +30,7 @@ use Symfony\Component\HttpClient\Exception\TransportException;
  */
 trait ResponseTrait
 {
-    private $statusCode = 0;
+    private $logger;
     private $headers = [];
 
     /**
@@ -42,7 +44,8 @@ trait ResponseTrait
     private $content;
 
     private $info = [
-        'raw_headers' => [],
+        'response_headers' => [],
+        'http_code' => 0,
         'error' => null,
     ];
 
@@ -52,6 +55,7 @@ trait ResponseTrait
     private $timeout;
     private $finalInfo;
     private $offset = 0;
+    private $jsonData;
 
     /**
      * {@inheritdoc}
@@ -63,7 +67,7 @@ trait ResponseTrait
             $this->initializer = null;
         }
 
-        return $this->statusCode;
+        return $this->info['http_code'];
     }
 
     /**
@@ -98,14 +102,16 @@ trait ResponseTrait
         }
 
         if (null === $this->content) {
-            $content = '';
+            $content = null;
             $chunk = null;
 
             foreach (self::stream([$this]) as $chunk) {
-                $content .= $chunk->getContent();
+                if (!$chunk->isLast()) {
+                    $content .= $chunk->getContent();
+                }
             }
 
-            if (null === $chunk) {
+            if (null === $content) {
                 throw new TransportException('Cannot get the content of the response twice: the request was issued with option "buffer" set to false.');
             }
 
@@ -119,6 +125,47 @@ trait ResponseTrait
         rewind($this->content);
 
         return stream_get_contents($this->content);
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function toArray(bool $throw = true): array
+    {
+        if ('' === $content = $this->getContent($throw)) {
+            throw new TransportException('Response body is empty.');
+        }
+
+        if (null !== $this->jsonData) {
+            return $this->jsonData;
+        }
+
+        $contentType = $this->headers['content-type'][0] ?? 'application/json';
+
+        if (!preg_match('/\bjson\b/i', $contentType)) {
+            throw new JsonException(sprintf('Response content-type is "%s" while a JSON-compatible one was expected.', $contentType));
+        }
+
+        try {
+            $content = json_decode($content, true, 512, JSON_BIGINT_AS_STRING | (\PHP_VERSION_ID >= 70300 ? JSON_THROW_ON_ERROR : 0));
+        } catch (\JsonException $e) {
+            throw new JsonException($e->getMessage(), $e->getCode());
+        }
+
+        if (\PHP_VERSION_ID < 70300 && JSON_ERROR_NONE !== json_last_error()) {
+            throw new JsonException(json_last_error_msg(), json_last_error());
+        }
+
+        if (!\is_array($content)) {
+            throw new JsonException(sprintf('JSON content was expected to decode to an array, %s returned.', \gettype($content)));
+        }
+
+        if (null !== $this->content) {
+            // Option "buffer" is true
+            return $this->jsonData = $content;
+        }
+
+        return $content;
     }
 
     /**
@@ -141,35 +188,35 @@ trait ResponseTrait
      */
     abstract protected static function select(\stdClass $multi, float $timeout): int;
 
-    private function addRawHeaders(array $rawHeaders): void
+    private static function addResponseHeaders(array $responseHeaders, array &$info, array &$headers): void
     {
-        foreach ($rawHeaders as $h) {
+        foreach ($responseHeaders as $h) {
             if (11 <= \strlen($h) && '/' === $h[4] && preg_match('#^HTTP/\d+(?:\.\d+)? ([12345]\d\d) .*#', $h, $m)) {
-                $this->headers = [];
-                $this->info['http_code'] = $this->statusCode = (int) $m[1];
+                $headers = [];
+                $info['http_code'] = (int) $m[1];
             } elseif (2 === \count($m = explode(':', $h, 2))) {
-                $this->headers[strtolower($m[0])][] = ltrim($m[1]);
+                $headers[strtolower($m[0])][] = ltrim($m[1]);
             }
 
-            $this->info['raw_headers'][] = $h;
+            $info['response_headers'][] = $h;
         }
 
-        if (!$this->statusCode) {
+        if (!$info['http_code']) {
             throw new TransportException('Invalid or missing HTTP status line.');
         }
     }
 
     private function checkStatusCode()
     {
-        if (500 <= $this->statusCode) {
+        if (500 <= $this->info['http_code']) {
             throw new ServerException($this);
         }
 
-        if (400 <= $this->statusCode) {
+        if (400 <= $this->info['http_code']) {
             throw new ClientException($this);
         }
 
-        if (300 <= $this->statusCode) {
+        if (300 <= $this->info['http_code']) {
             throw new RedirectionException($this);
         }
     }
@@ -214,9 +261,7 @@ trait ResponseTrait
                 foreach ($responses as $j => $response) {
                     $timeoutMax = $timeout ?? max($timeoutMax, $response->timeout);
                     $timeoutMin = min($timeoutMin, $response->timeout, 1);
-                    // ErrorChunk instances will set $didThrow to true when the
-                    // exception they wrap has been thrown after yielding
-                    $chunk = $didThrow = false;
+                    $chunk = false;
 
                     if (isset($multi->handlesActivity[$j])) {
                         // no-op
@@ -224,7 +269,7 @@ trait ResponseTrait
                         unset($responses[$j]);
                         continue;
                     } elseif ($isTimeout) {
-                        $multi->handlesActivity[$j] = [new ErrorChunk($didThrow, $response->offset)];
+                        $multi->handlesActivity[$j] = [new ErrorChunk($response->offset)];
                     } else {
                         continue;
                     }
@@ -237,25 +282,27 @@ trait ResponseTrait
                             $response->offset += \strlen($chunk);
                             $chunk = new DataChunk($response->offset, $chunk);
                         } elseif (null === $chunk) {
-                            if (null !== $e = $response->info['error'] ?? $multi->handlesActivity[$j][0]) {
+                            $e = $multi->handlesActivity[$j][0];
+                            unset($responses[$j], $multi->handlesActivity[$j]);
+                            $response->close();
+
+                            if (null !== $e) {
                                 $response->info['error'] = $e->getMessage();
 
                                 if ($e instanceof \Error) {
-                                    unset($responses[$j], $multi->handlesActivity[$j]);
-                                    $response->close();
                                     throw $e;
                                 }
 
-                                $chunk = new ErrorChunk($didThrow, $response->offset, $e);
+                                $chunk = new ErrorChunk($response->offset, $e);
                             } else {
                                 $chunk = new LastChunk($response->offset);
                             }
-
-                            unset($responses[$j]);
-                            $response->close();
                         } elseif ($chunk instanceof ErrorChunk) {
                             unset($responses[$j]);
                             $isTimeout = true;
+                        } elseif ($chunk instanceof FirstChunk && $response->logger) {
+                            $info = $response->getInfo();
+                            $response->logger->info(sprintf('Response: "%s %s"', $info['http_code'], $info['url']));
                         }
 
                         yield $response => $chunk;
@@ -266,7 +313,7 @@ trait ResponseTrait
                     if ($chunk instanceof FirstChunk && null === $response->initializer) {
                         // Ensure the HTTP status code is always checked
                         $response->getHeaders(true);
-                    } elseif ($chunk instanceof ErrorChunk && !$didThrow) {
+                    } elseif ($chunk instanceof ErrorChunk && !$chunk->didThrow()) {
                         // Ensure transport exceptions are always thrown
                         $chunk->getContent();
                     }

@@ -35,6 +35,7 @@ use Symfony\Component\DependencyInjection\Loader\ClosureLoader;
 use Symfony\Component\DependencyInjection\ParameterBag\ParameterBag;
 use Symfony\Component\DependencyInjection\Reference;
 use Symfony\Component\EventDispatcher\EventDispatcherInterface;
+use Symfony\Component\HttpClient\ScopingHttpClient;
 use Symfony\Component\HttpKernel\DependencyInjection\LoggerPass;
 use Symfony\Component\Messenger\Tests\Fixtures\DummyMessage;
 use Symfony\Component\Messenger\Tests\Fixtures\SecondMessage;
@@ -50,6 +51,8 @@ use Symfony\Component\Serializer\Normalizer\JsonSerializableNormalizer;
 use Symfony\Component\Serializer\Serializer;
 use Symfony\Component\Translation\DependencyInjection\TranslatorPass;
 use Symfony\Component\Validator\DependencyInjection\AddConstraintValidatorsPass;
+use Symfony\Component\Validator\Mapping\Loader\PropertyInfoLoader;
+use Symfony\Component\Validator\Validation;
 use Symfony\Component\Workflow;
 
 abstract class FrameworkExtensionTest extends TestCase
@@ -215,9 +218,8 @@ abstract class FrameworkExtensionTest extends TestCase
             $workflowDefinition->getArgument(0),
             'Places are passed to the workflow definition'
         );
-        $this->assertSame(['workflow.definition' => [['name' => 'article', 'type' => 'workflow', 'marking_store' => 'multiple_state', 'single_state' => false]]], $workflowDefinition->getTags());
         $this->assertCount(4, $workflowDefinition->getArgument(1));
-        $this->assertSame('draft', $workflowDefinition->getArgument(2));
+        $this->assertSame(['draft'], $workflowDefinition->getArgument(2));
 
         $this->assertTrue($container->hasDefinition('state_machine.pull_request'), 'State machine is registered as a service');
         $this->assertSame('state_machine.abstract', $container->getDefinition('state_machine.pull_request')->getParent());
@@ -237,9 +239,8 @@ abstract class FrameworkExtensionTest extends TestCase
             $stateMachineDefinition->getArgument(0),
             'Places are passed to the state machine definition'
         );
-        $this->assertSame(['workflow.definition' => [['name' => 'pull_request', 'type' => 'state_machine', 'marking_store' => 'single_state', 'single_state' => false]]], $stateMachineDefinition->getTags());
         $this->assertCount(9, $stateMachineDefinition->getArgument(1));
-        $this->assertSame('start', $stateMachineDefinition->getArgument(2));
+        $this->assertSame(['start'], $stateMachineDefinition->getArgument(2));
 
         $metadataStoreDefinition = $stateMachineDefinition->getArgument(3);
         $this->assertInstanceOf(Definition::class, $metadataStoreDefinition);
@@ -270,6 +271,37 @@ abstract class FrameworkExtensionTest extends TestCase
         $this->assertTrue($container->hasDefinition('workflow.registry'), 'Workflow registry is registered as a service');
         $registryDefinition = $container->getDefinition('workflow.registry');
         $this->assertGreaterThan(0, \count($registryDefinition->getMethodCalls()));
+    }
+
+    public function testWorkflowLegacy()
+    {
+        $container = $this->createContainerFromFile('workflow-legacy');
+
+        $this->assertTrue($container->hasDefinition('workflow.legacy'), 'Workflow is registered as a service');
+        $this->assertSame('workflow.abstract', $container->getDefinition('workflow.legacy')->getParent());
+        $this->assertTrue($container->hasDefinition('workflow.legacy.definition'), 'Workflow definition is registered as a service');
+
+        $workflowDefinition = $container->getDefinition('workflow.legacy.definition');
+
+        $this->assertSame(['draft'], $workflowDefinition->getArgument(2));
+
+        $this->assertSame(
+            [
+                'draft',
+                'published',
+            ],
+            $workflowDefinition->getArgument(0),
+            'Places are passed to the workflow definition'
+        );
+    }
+
+    /**
+     * @expectedException \Symfony\Component\Workflow\Exception\InvalidDefinitionException
+     * @expectedExceptionMessage A transition from a place/state must have an unique name. Multiple transitions named "go" from place/state "first" where found on StateMachine "my_workflow".
+     */
+    public function testWorkflowAreValidated()
+    {
+        $this->createContainerFromFile('workflow_not_valid');
     }
 
     /**
@@ -525,9 +557,12 @@ abstract class FrameworkExtensionTest extends TestCase
         $this->assertFalse($container->hasDefinition('request.add_request_formats_listener'), '->registerRequestConfiguration() does not load request.xml when no request formats are defined');
     }
 
+    /**
+     * @group legacy
+     */
     public function testTemplating()
     {
-        $container = $this->createContainerFromFile('full');
+        $container = $this->createContainerFromFile('templating');
 
         $this->assertTrue($container->hasDefinition('templating.name_parser'), '->registerTemplatingConfiguration() loads templating.xml');
 
@@ -615,6 +650,8 @@ abstract class FrameworkExtensionTest extends TestCase
         $container = $this->createContainerFromFile('messenger');
         $this->assertTrue($container->hasAlias('message_bus'));
         $this->assertTrue($container->getAlias('message_bus')->isPublic());
+        $this->assertTrue($container->hasAlias('messenger.default_bus'));
+        $this->assertTrue($container->getAlias('messenger.default_bus')->isPublic());
         $this->assertFalse($container->hasDefinition('messenger.transport.amqp.factory'));
         $this->assertTrue($container->hasDefinition('messenger.transport_factory'));
         $this->assertSame(TransportFactory::class, $container->getDefinition('messenger.transport_factory')->getClass());
@@ -626,15 +663,18 @@ abstract class FrameworkExtensionTest extends TestCase
         $this->assertTrue($container->hasDefinition('messenger.transport.default'));
         $this->assertTrue($container->getDefinition('messenger.transport.default')->hasTag('messenger.receiver'));
         $this->assertEquals([['alias' => 'default']], $container->getDefinition('messenger.transport.default')->getTag('messenger.receiver'));
+        $transportArguments = $container->getDefinition('messenger.transport.default')->getArguments();
+        $this->assertEquals(new Reference('messenger.default_serializer'), $transportArguments[2]);
 
         $this->assertTrue($container->hasDefinition('messenger.transport.customised'));
         $transportFactory = $container->getDefinition('messenger.transport.customised')->getFactory();
         $transportArguments = $container->getDefinition('messenger.transport.customised')->getArguments();
 
         $this->assertEquals([new Reference('messenger.transport_factory'), 'createTransport'], $transportFactory);
-        $this->assertCount(2, $transportArguments);
+        $this->assertCount(3, $transportArguments);
         $this->assertSame('amqp://localhost/%2f/messages?exchange_name=exchange_name', $transportArguments[0]);
-        $this->assertSame(['queue' => ['name' => 'Queue']], $transportArguments[1]);
+        $this->assertEquals(['queue' => ['name' => 'Queue']], $transportArguments[1]);
+        $this->assertEquals(new Reference('messenger.transport.native_php_serializer'), $transportArguments[2]);
 
         $this->assertTrue($container->hasDefinition('messenger.transport.amqp.factory'));
     }
@@ -658,29 +698,11 @@ abstract class FrameworkExtensionTest extends TestCase
         ], $sendersMapping[DummyMessage::class]->getValues());
     }
 
-    /**
-     * @expectedException \Symfony\Component\DependencyInjection\Exception\LogicException
-     * @expectedExceptionMessage The Messenger serializer cannot be enabled as the Serializer support is not available. Try enabling it or running "composer require symfony/serializer-pack".
-     */
-    public function testMessengerTransportConfigurationWithoutSerializer()
-    {
-        $this->createContainerFromFile('messenger_transport_no_serializer');
-    }
-
-    /**
-     * @expectedException \Symfony\Component\DependencyInjection\Exception\LogicException
-     * @expectedExceptionMessage The default AMQP transport is not available. Make sure you have installed and enabled the Serializer component. Try enabling it or running "composer require symfony/serializer-pack".
-     */
-    public function testMessengerAMQPTransportConfigurationWithoutSerializer()
-    {
-        $this->createContainerFromFile('messenger_amqp_transport_no_serializer');
-    }
-
     public function testMessengerTransportConfiguration()
     {
         $container = $this->createContainerFromFile('messenger_transport');
 
-        $this->assertSame('messenger.transport.symfony_serializer', (string) $container->getAlias('messenger.transport.serializer'));
+        $this->assertSame('messenger.transport.symfony_serializer', (string) $container->getAlias('messenger.default_serializer'));
 
         $serializerTransportDefinition = $container->getDefinition('messenger.transport.symfony_serializer');
         $this->assertSame('csv', $serializerTransportDefinition->getArgument(1));
@@ -694,14 +716,16 @@ abstract class FrameworkExtensionTest extends TestCase
         $this->assertTrue($container->has('messenger.bus.commands'));
         $this->assertSame([], $container->getDefinition('messenger.bus.commands')->getArgument(0));
         $this->assertEquals([
-            ['id' => 'logging'],
+            ['id' => 'add_bus_name_stamp_middleware', 'arguments' => ['messenger.bus.commands']],
+            ['id' => 'dispatch_after_current_bus'],
             ['id' => 'send_message'],
             ['id' => 'handle_message'],
         ], $container->getParameter('messenger.bus.commands.middleware'));
         $this->assertTrue($container->has('messenger.bus.events'));
         $this->assertSame([], $container->getDefinition('messenger.bus.events')->getArgument(0));
         $this->assertEquals([
-            ['id' => 'logging'],
+            ['id' => 'add_bus_name_stamp_middleware', 'arguments' => ['messenger.bus.events']],
+            ['id' => 'dispatch_after_current_bus'],
             ['id' => 'with_factory', 'arguments' => ['foo', true, ['bar' => 'baz']]],
             ['id' => 'send_message'],
             ['id' => 'handle_message'],
@@ -715,6 +739,8 @@ abstract class FrameworkExtensionTest extends TestCase
 
         $this->assertTrue($container->hasAlias('message_bus'));
         $this->assertSame('messenger.bus.commands', (string) $container->getAlias('message_bus'));
+        $this->assertTrue($container->hasAlias('messenger.default_bus'));
+        $this->assertSame('messenger.bus.commands', (string) $container->getAlias('messenger.default_bus'));
     }
 
     /**
@@ -1022,6 +1048,23 @@ abstract class FrameworkExtensionTest extends TestCase
         $this->assertContains('validation.yaml', $calls[4][1][0][2]);
     }
 
+    public function testValidationAutoMapping()
+    {
+        if (!class_exists(PropertyInfoLoader::class)) {
+            $this->markTestSkipped('Auto-mapping requires symfony/validation 4.2+');
+        }
+
+        $container = $this->createContainerFromFile('validation_auto_mapping');
+        $parameter = [
+            'App\\' => ['services' => ['foo', 'bar']],
+            'Symfony\\' => ['services' => ['a', 'b']],
+            'Foo\\' => ['services' => []],
+        ];
+
+        $this->assertSame($parameter, $container->getParameter('validator.auto_mapping'));
+        $this->assertTrue($container->hasDefinition('validator.property_info_loader'));
+    }
+
     public function testFormsCanBeEnabledWithoutCsrfProtection()
     {
         $container = $this->createContainerFromFile('form_no_csrf');
@@ -1189,14 +1232,20 @@ abstract class FrameworkExtensionTest extends TestCase
         $this->assertEquals($expectedLoaders, $loaders);
     }
 
+    /**
+     * @group legacy
+     */
     public function testAssetHelperWhenAssetsAreEnabled()
     {
-        $container = $this->createContainerFromFile('full');
+        $container = $this->createContainerFromFile('templating');
         $packages = $container->getDefinition('templating.helper.assets')->getArgument(0);
 
         $this->assertSame('assets.packages', (string) $packages);
     }
 
+    /**
+     * @group legacy
+     */
     public function testAssetHelperWhenTemplatesAreEnabledAndNoAssetsConfiguration()
     {
         $container = $this->createContainerFromFile('templating_no_assets');
@@ -1205,6 +1254,9 @@ abstract class FrameworkExtensionTest extends TestCase
         $this->assertSame('assets.packages', (string) $packages);
     }
 
+    /**
+     * @group legacy
+     */
     public function testAssetsHelperIsRemovedWhenPhpTemplatingEngineIsEnabledAndAssetsAreDisabled()
     {
         $container = $this->createContainerFromFile('templating_php_assets_disabled');
@@ -1346,6 +1398,69 @@ abstract class FrameworkExtensionTest extends TestCase
         $container = $this->createContainer(['kernel.debug' => false]);
         (new FrameworkExtension())->load([], $container);
         $this->assertFalse($container->has('disallow_search_engine_index_response_listener'), 'DisallowRobotsIndexingListener should NOT be registered');
+    }
+
+    public function testHttpClientDefaultOptions()
+    {
+        $container = $this->createContainerFromFile('http_client_default_options');
+        $this->assertTrue($container->hasDefinition('http_client'), '->registerHttpClientConfiguration() loads http_client.xml');
+
+        $defaultOptions = [
+            'headers' => [],
+            'resolve' => [],
+        ];
+        $this->assertSame([$defaultOptions, 4], $container->getDefinition('http_client')->getArguments());
+
+        $this->assertTrue($container->hasDefinition('foo'), 'should have the "foo" service.');
+        $this->assertSame(ScopingHttpClient::class, $container->getDefinition('foo')->getClass());
+    }
+
+    public function testHttpClientOverrideDefaultOptions()
+    {
+        $container = $this->createContainerFromFile('http_client_override_default_options');
+
+        $this->assertSame(['foo' => 'bar'], $container->getDefinition('http_client')->getArgument(0)['headers']);
+        $this->assertSame(4, $container->getDefinition('http_client')->getArgument(1));
+
+        $expected = [
+            'http\://example\.com/' => [
+                'base_uri' => 'http://example.com',
+                'headers' => [
+                    'bar' => 'baz',
+                ],
+                'query' => [],
+                'resolve' => [],
+            ],
+        ];
+
+        $this->assertSame($expected, $container->getDefinition('foo')->getArgument(1));
+    }
+
+    public function testHttpClientFullDefaultOptions()
+    {
+        $container = $this->createContainerFromFile('http_client_full_default_options');
+
+        $defaultOptions = $container->getDefinition('http_client')->getArgument(0);
+
+        $this->assertSame(['X-powered' => 'PHP'], $defaultOptions['headers']);
+        $this->assertSame(2, $defaultOptions['max_redirects']);
+        $this->assertSame(2.0, (float) $defaultOptions['http_version']);
+        $this->assertSame(['localhost' => '127.0.0.1'], $defaultOptions['resolve']);
+        $this->assertSame('proxy.org', $defaultOptions['proxy']);
+        $this->assertSame(3.5, $defaultOptions['timeout']);
+        $this->assertSame('127.0.0.1', $defaultOptions['bindto']);
+        $this->assertTrue($defaultOptions['verify_peer']);
+        $this->assertTrue($defaultOptions['verify_host']);
+        $this->assertSame('/etc/ssl/cafile', $defaultOptions['cafile']);
+        $this->assertSame('/etc/ssl', $defaultOptions['capath']);
+        $this->assertSame('/etc/ssl/cert.pem', $defaultOptions['local_cert']);
+        $this->assertSame('/etc/ssl/private_key.pem', $defaultOptions['local_pk']);
+        $this->assertSame('password123456', $defaultOptions['passphrase']);
+        $this->assertSame('RC4-SHA:TLS13-AES-128-GCM-SHA256', $defaultOptions['ciphers']);
+        $this->assertSame([
+            'pin-sha256' => ['14s5erg62v1v8471g2revg48r7==', 'jsda84hjtyd4821bgfesd215bsfg5412='],
+            'md5' => 'sdhtb481248721thbr=',
+        ], $defaultOptions['peer_fingerprint']);
     }
 
     protected function createContainer(array $data = [])

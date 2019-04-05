@@ -13,6 +13,7 @@ namespace Symfony\Component\Messenger\Tests\Transport\Serialization;
 
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Messenger\Envelope;
+use Symfony\Component\Messenger\Exception\MessageDecodingFailedException;
 use Symfony\Component\Messenger\Stamp\SerializerStamp;
 use Symfony\Component\Messenger\Stamp\ValidationStamp;
 use Symfony\Component\Messenger\Tests\Fixtures\DummyMessage;
@@ -93,5 +94,60 @@ class SerializerTest extends TestCase
 
         $this->assertEquals($serializerStamp, $decoded->last(SerializerStamp::class));
         $this->assertEquals($validationStamp, $decoded->last(ValidationStamp::class));
+    }
+
+    public function testDecodingFailsWithBadFormat()
+    {
+        $this->expectException(MessageDecodingFailedException::class);
+
+        $serializer = new Serializer();
+
+        $serializer->decode([
+            'body' => '{foo',
+            'headers' => ['type' => 'stdClass'],
+        ]);
+    }
+
+    /**
+     * @dataProvider getMissingKeyTests
+     */
+    public function testDecodingFailsWithMissingKeys(array $data, string $expectedMessage)
+    {
+        $this->expectException(MessageDecodingFailedException::class);
+        $this->expectExceptionMessage($expectedMessage);
+
+        $serializer = new Serializer();
+
+        $serializer->decode($data);
+    }
+
+    public function getMissingKeyTests()
+    {
+        yield 'no_body' => [
+            ['headers' => ['type' => 'bar']],
+            'Encoded envelope should have at least a "body" and some "headers".',
+        ];
+
+        yield 'no_headers' => [
+            ['body' => '{}'],
+            'Encoded envelope should have at least a "body" and some "headers".',
+        ];
+
+        yield 'no_headers_type' => [
+            ['body' => '{}', 'headers' => ['foo' => 'bar']],
+            'Encoded envelope does not have a "type" header.',
+        ];
+    }
+
+    public function testDecodingFailsWithBadClass()
+    {
+        $this->expectException(MessageDecodingFailedException::class);
+
+        $serializer = new Serializer();
+
+        $serializer->decode([
+            'body' => '{}',
+            'headers' => ['type' => 'NonExistentClass'],
+        ]);
     }
 }

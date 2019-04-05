@@ -4,6 +4,9 @@ CHANGELOG
 4.3.0
 -----
 
+ * Added PHPUnit constraints: `BrowserCookieValueSame` and `BrowserHasCookie`
+ * Added `HttpBrowser`, an implementation of a browser with the HttpClient component
+ * Renamed `Client` to `AbstractBrowser`
  * Marked `Response` final.
  * Deprecated `Response::buildHeader()`
  * Deprecated `Response::getStatus()`, use `Response::getStatusCode()` instead

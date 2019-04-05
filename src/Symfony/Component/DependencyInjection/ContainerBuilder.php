@@ -1139,8 +1139,15 @@ class ContainerBuilder extends Container implements TaggedContainerInterface
             }
         }
 
-        if ($tryProxy || !$definition->isLazy()) {
-            // share only if proxying failed, or if not a proxy
+        $lastWitherIndex = null;
+        foreach ($definition->getMethodCalls() as $k => $call) {
+            if ($call[2] ?? false) {
+                $lastWitherIndex = $k;
+            }
+        }
+
+        if (null === $lastWitherIndex && ($tryProxy || !$definition->isLazy())) {
+            // share only if proxying failed, or if not a proxy, and if no withers are found
             $this->shareService($definition, $service, $id, $inlineServices);
         }
 
@@ -1149,8 +1156,13 @@ class ContainerBuilder extends Container implements TaggedContainerInterface
             $service->$name = $value;
         }
 
-        foreach ($definition->getMethodCalls() as $call) {
-            $this->callMethod($service, $call, $inlineServices);
+        foreach ($definition->getMethodCalls() as $k => $call) {
+            $service = $this->callMethod($service, $call, $inlineServices);
+
+            if ($lastWitherIndex === $k && ($tryProxy || !$definition->isLazy())) {
+                // share only if proxying failed, or if not a proxy, and this is the last wither
+                $this->shareService($definition, $service, $id, $inlineServices);
+            }
         }
 
         if ($callable = $definition->getConfigurator()) {
@@ -1234,13 +1246,14 @@ class ContainerBuilder extends Container implements TaggedContainerInterface
                 return $count;
             });
         } elseif ($value instanceof ServiceLocatorArgument) {
-            $refs = [];
+            $refs = $types = [];
             foreach ($value->getValues() as $k => $v) {
                 if ($v) {
                     $refs[$k] = [$v];
+                    $types[$k] = $v instanceof TypedReference ? $v->getType() : '?';
                 }
             }
-            $value = new ServiceLocator(\Closure::fromCallable([$this, 'resolveServices']), $refs);
+            $value = new ServiceLocator(\Closure::fromCallable([$this, 'resolveServices']), $refs, $types);
         } elseif ($value instanceof Reference) {
             $value = $this->doGet((string) $value, $value->getInvalidBehavior(), $inlineServices, $isConstructorArgument);
         } elseif ($value instanceof Definition) {
@@ -1568,16 +1581,18 @@ class ContainerBuilder extends Container implements TaggedContainerInterface
     {
         foreach (self::getServiceConditionals($call[1]) as $s) {
             if (!$this->has($s)) {
-                return;
+                return $service;
             }
         }
         foreach (self::getInitializedConditionals($call[1]) as $s) {
             if (!$this->doGet($s, ContainerInterface::IGNORE_ON_UNINITIALIZED_REFERENCE, $inlineServices)) {
-                return;
+                return $service;
             }
         }
 
-        $service->{$call[0]}(...$this->doResolveServices($this->getParameterBag()->unescapeValue($this->getParameterBag()->resolveValue($call[1])), $inlineServices));
+        $result = $service->{$call[0]}(...$this->doResolveServices($this->getParameterBag()->unescapeValue($this->getParameterBag()->resolveValue($call[1])), $inlineServices));
+
+        return empty($call[2]) ? $service : $result;
     }
 
     /**

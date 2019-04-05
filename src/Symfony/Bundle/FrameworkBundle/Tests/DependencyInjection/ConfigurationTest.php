@@ -17,7 +17,9 @@ use Symfony\Bundle\FrameworkBundle\DependencyInjection\Configuration;
 use Symfony\Bundle\FullStack;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\Config\Definition\Processor;
+use Symfony\Component\HttpClient\HttpClient;
 use Symfony\Component\Lock\Store\SemaphoreStore;
+use Symfony\Component\Mailer\Mailer;
 use Symfony\Component\Messenger\MessageBusInterface;
 
 class ConfigurationTest extends TestCase
@@ -231,6 +233,7 @@ class ConfigurationTest extends TestCase
                 'mapping' => [
                     'paths' => [],
                 ],
+                'auto_mapping' => [],
             ],
             'annotations' => [
                 'cache' => 'php_array',
@@ -322,8 +325,8 @@ class ConfigurationTest extends TestCase
                 'enabled' => !class_exists(FullStack::class) && interface_exists(MessageBusInterface::class),
                 'routing' => [],
                 'transports' => [],
-                'serializer' => [
-                    'id' => 'messenger.transport.native_php_serializer',
+                'default_serializer' => 'messenger.transport.native_php_serializer',
+                'symfony_serializer' => [
                     'format' => 'json',
                     'context' => [],
                 ],
@@ -331,6 +334,14 @@ class ConfigurationTest extends TestCase
                 'buses' => ['messenger.bus.default' => ['default_middleware' => true, 'middleware' => []]],
             ],
             'disallow_search_engine_index' => true,
+            'http_client' => [
+                'enabled' => !class_exists(FullStack::class) && class_exists(HttpClient::class),
+                'scoped_clients' => [],
+            ],
+            'mailer' => [
+                'dsn' => 'smtp://null',
+                'enabled' => !class_exists(FullStack::class) && class_exists(Mailer::class),
+            ],
         ];
     }
 }

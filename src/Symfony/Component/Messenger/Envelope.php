@@ -26,9 +26,10 @@ final class Envelope
     private $message;
 
     /**
-     * @param object $message
+     * @param object           $message
+     * @param StampInterface[] $stamps
      */
-    public function __construct($message, StampInterface ...$stamps)
+    public function __construct($message, array $stamps = [])
     {
         if (!\is_object($message)) {
             throw new \TypeError(sprintf('Invalid argument provided to "%s()": expected object but got %s.', __METHOD__, \gettype($message)));
@@ -41,6 +42,19 @@ final class Envelope
     }
 
     /**
+     * Makes sure the message is in an Envelope and adds the given stamps.
+     *
+     * @param object|Envelope  $message
+     * @param StampInterface[] $stamps
+     */
+    public static function wrap($message, array $stamps = []): self
+    {
+        $envelope = $message instanceof self ? $message : new self($message);
+
+        return $envelope->with(...$stamps);
+    }
+
+    /**
      * @return Envelope a new Envelope instance with additional stamp
      */
     public function with(StampInterface ...$stamps): self
@@ -50,6 +64,18 @@ final class Envelope
         foreach ($stamps as $stamp) {
             $cloned->stamps[\get_class($stamp)][] = $stamp;
         }
+
+        return $cloned;
+    }
+
+    /**
+     * @return Envelope a new Envelope instance without any stamps of the given class
+     */
+    public function withoutAll(string $stampFqcn): self
+    {
+        $cloned = clone $this;
+
+        unset($cloned->stamps[$stampFqcn]);
 
         return $cloned;
     }

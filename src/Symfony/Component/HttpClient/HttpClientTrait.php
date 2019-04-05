@@ -34,8 +34,13 @@ trait HttpClientTrait
      */
     private static function prepareRequest(?string $method, ?string $url, array $options, array $defaultOptions = [], bool $allowExtraOptions = false): array
     {
-        if (null !== $method && \strlen($method) !== strspn($method, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ')) {
-            throw new InvalidArgumentException(sprintf('Invalid HTTP method "%s", only uppercase letters are accepted.', $method));
+        if (null !== $method) {
+            if (\strlen($method) !== strspn($method, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ')) {
+                throw new InvalidArgumentException(sprintf('Invalid HTTP method "%s", only uppercase letters are accepted.', $method));
+            }
+            if (!$method) {
+                throw new InvalidArgumentException('The HTTP method can not be empty.');
+            }
         }
 
         $options = self::mergeDefaultOptions($options, $defaultOptions, $allowExtraOptions);
@@ -53,12 +58,12 @@ trait HttpClientTrait
             $options['peer_fingerprint'] = self::normalizePeerFingerprint($options['peer_fingerprint']);
         }
 
-        // Compute raw headers
-        $rawHeaders = $headers = [];
+        // Compute request headers
+        $requestHeaders = $headers = [];
 
         foreach ($options['headers'] as $name => $values) {
             foreach ($values as $value) {
-                $rawHeaders[] = $name.': '.$headers[$name][] = $value = (string) $value;
+                $requestHeaders[] = $name.': '.$headers[$name][] = $value = (string) $value;
 
                 if (\strlen($value) !== strcspn($value, "\r\n\0")) {
                     throw new InvalidArgumentException(sprintf('Invalid header value: CR/LF/NUL found in "%s".', $value));
@@ -71,18 +76,39 @@ trait HttpClientTrait
             throw new InvalidArgumentException(sprintf('Option "on_progress" must be callable, %s given.', \is_object($onProgress) ? \get_class($onProgress) : \gettype($onProgress)));
         }
 
-        if (!\is_string($options['auth'] ?? '')) {
-            throw new InvalidArgumentException(sprintf('Option "auth" must be string, %s given.', \gettype($options['auth'])));
+        if (\is_array($options['auth_basic'] ?? null)) {
+            $count = \count($options['auth_basic']);
+            if ($count <= 0 || $count > 2) {
+                throw new InvalidArgumentException(sprintf('Option "auth_basic" must contain 1 or 2 elements, %s given.', $count));
+            }
+
+            $options['auth_basic'] = implode(':', $options['auth_basic']);
+        }
+
+        if (!\is_string($options['auth_basic'] ?? '')) {
+            throw new InvalidArgumentException(sprintf('Option "auth_basic" must be string or an array, %s given.', \gettype($options['auth_basic'])));
+        }
+
+        if (isset($options['auth_bearer']) && (!\is_string($options['auth_bearer']) || !preg_match('{^[-._~+/0-9a-zA-Z]++=*+$}', $options['auth_bearer']))) {
+            throw new InvalidArgumentException(sprintf('Option "auth_bearer" must be a string containing only characters from the base 64 alphabet, %s given.', \is_string($options['auth_bearer']) ? 'invalid string' : \gettype($options['auth_bearer'])));
+        }
+
+        if (isset($options['auth_basic'], $options['auth_bearer'])) {
+            throw new InvalidArgumentException('Define either the "auth_basic" or the "auth_bearer" option, setting both is not supported.');
         }
 
         if (null !== $url) {
             // Merge auth with headers
-            if (($options['auth'] ?? false) && !($headers['authorization'] ?? false)) {
-                $rawHeaders[] = 'authorization: '.$headers['authorization'][] = 'Basic '.base64_encode($options['auth']);
+            if (($options['auth_basic'] ?? false) && !($headers['authorization'] ?? false)) {
+                $requestHeaders[] = 'authorization: '.$headers['authorization'][] = 'Basic '.base64_encode($options['auth_basic']);
+            }
+            // Merge bearer with headers
+            if (($options['auth_bearer'] ?? false) && !($headers['authorization'] ?? false)) {
+                $requestHeaders[] = 'authorization: '.$headers['authorization'][] = 'Bearer '.$options['auth_bearer'];
             }
 
-            $options['raw_headers'] = $rawHeaders;
-            unset($options['auth']);
+            $options['request_headers'] = $requestHeaders;
+            unset($options['auth_basic'], $options['auth_bearer']);
 
             // Parse base URI
             if (\is_string($options['base_uri'])) {
@@ -96,7 +122,7 @@ trait HttpClientTrait
 
         // Finalize normalization of options
         $options['headers'] = $headers;
-        $options['http_version'] = (string) ($options['http_version'] ?? '');
+        $options['http_version'] = (string) ($options['http_version'] ?? '') ?: null;
         $options['timeout'] = (float) ($options['timeout'] ?? ini_get('default_socket_timeout'));
 
         return [$url, $options];
@@ -107,6 +133,8 @@ trait HttpClientTrait
      */
     private static function mergeDefaultOptions(array $options, array $defaultOptions, bool $allowExtraOptions = false): array
     {
+        unset($options['request_headers'], $defaultOptions['request_headers']);
+
         $options['headers'] = self::normalizeHeaders($options['headers'] ?? []);
 
         if ($defaultOptions['headers'] ?? false) {
@@ -120,7 +148,13 @@ trait HttpClientTrait
         // Option "query" is never inherited from defaults
         $options['query'] = $options['query'] ?? [];
 
-        $options += $defaultOptions;
+        foreach ($defaultOptions as $k => $v) {
+            $options[$k] = $options[$k] ?? $v;
+        }
+
+        if (isset($defaultOptions['extra'])) {
+            $options['extra'] += $defaultOptions['extra'];
+        }
 
         if ($defaultOptions['resolve'] ?? false) {
             $options['resolve'] += array_change_key_case($defaultOptions['resolve']);
@@ -201,10 +235,16 @@ trait HttpClientTrait
             if ($r->isGenerator()) {
                 $body = $body(self::$CHUNK_SIZE);
                 $body = function () use ($body) {
-                    $chunk = $body->valid() ? $body->current() : '';
-                    $body->next();
+                    while ($body->valid()) {
+                        $chunk = $body->current();
+                        $body->next();
 
-                    return $chunk;
+                        if ('' !== $chunk) {
+                            return $chunk;
+                        }
+                    }
+
+                    return '';
                 };
             }
 

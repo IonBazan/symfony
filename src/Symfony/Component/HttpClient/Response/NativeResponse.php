@@ -11,6 +11,7 @@
 
 namespace Symfony\Component\HttpClient\Response;
 
+use Psr\Log\LoggerInterface;
 use Symfony\Component\HttpClient\Chunk\FirstChunk;
 use Symfony\Component\HttpClient\Exception\TransportException;
 use Symfony\Contracts\HttpClient\ResponseInterface;
@@ -35,12 +36,13 @@ final class NativeResponse implements ResponseInterface
     /**
      * @internal
      */
-    public function __construct(\stdClass $multi, $context, string $url, $options, bool $gzipEnabled, array &$info, callable $resolveRedirect, ?callable $onProgress)
+    public function __construct(\stdClass $multi, $context, string $url, $options, bool $gzipEnabled, array &$info, callable $resolveRedirect, ?callable $onProgress, ?LoggerInterface $logger)
     {
         $this->multi = $multi;
         $this->id = (int) $context;
         $this->context = $context;
         $this->url = $url;
+        $this->logger = $logger;
         $this->timeout = $options['timeout'];
         $this->info = &$info;
         $this->resolveRedirect = $resolveRedirect;
@@ -107,15 +109,20 @@ final class NativeResponse implements ResponseInterface
             $this->info['start_time'] = microtime(true);
             $url = $this->url;
 
-            do {
+            while (true) {
                 // Send request and follow redirects when needed
                 $this->info['fopen_time'] = microtime(true);
                 $this->handle = $h = fopen($url, 'r', false, $this->context);
-                $this->addRawHeaders($http_response_header);
-                $url = ($this->resolveRedirect)($this->multi, $this->statusCode, $this->headers['location'][0] ?? null, $this->context);
-            } while (null !== $url);
+                self::addResponseHeaders($http_response_header, $this->info, $this->headers);
+                $url = ($this->resolveRedirect)($this->multi, $this->headers['location'][0] ?? null, $this->context);
+
+                if (null === $url) {
+                    break;
+                }
+
+                $this->logger && $this->logger->info(sprintf('Redirecting: "%s %s"', $this->info['http_code'], $url ?? $this->url));
+            }
         } catch (\Throwable $e) {
-            $this->statusCode = 0;
             $this->close();
             $this->multi->handlesActivity[$this->id][] = null;
             $this->multi->handlesActivity[$this->id][] = $e;
@@ -148,7 +155,7 @@ final class NativeResponse implements ResponseInterface
             $this->inflate = null;
         }
 
-        $this->multi->openHandles[$this->id] = [$h, $this->buffer, $this->inflate, &$this->content, $this->onProgress, &$this->remaining, &$this->info];
+        $this->multi->openHandles[$this->id] = [$h, $this->buffer, $this->inflate, $this->content, $this->onProgress, &$this->remaining, &$this->info];
         $this->multi->handlesActivity[$this->id] = [new FirstChunk()];
     }
 
@@ -166,10 +173,6 @@ final class NativeResponse implements ResponseInterface
      */
     private static function schedule(self $response, array &$runningResponses): void
     {
-        if (null === $response->buffer) {
-            return;
-        }
-
         if (!isset($runningResponses[$i = $response->multi->id])) {
             $runningResponses[$i] = [$response->multi, []];
         }
@@ -178,6 +181,12 @@ final class NativeResponse implements ResponseInterface
             $response->multi->pendingResponses[] = $response;
         } else {
             $runningResponses[$i][1][$response->id] = $response;
+        }
+
+        if (null === $response->buffer) {
+            // Response already completed
+            $response->multi->handlesActivity[$response->id][] = null;
+            $response->multi->handlesActivity[$response->id][] = null !== $response->info['error'] ? new TransportException($response->info['error']) : null;
         }
     }
 

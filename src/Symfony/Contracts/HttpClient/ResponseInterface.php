@@ -60,6 +60,18 @@ interface ResponseInterface
     public function getContent(bool $throw = true): string;
 
     /**
+     * Gets the response body decoded as array, typically from a JSON payload.
+     *
+     * @param bool $throw Whether an exception should be thrown on 3/4/5xx status codes
+     *
+     * @throws TransportExceptionInterface   When the body cannot be decoded or when a network error occurs
+     * @throws RedirectionExceptionInterface On a 3xx when $throw is true and the "max_redirects" option has been reached
+     * @throws ClientExceptionInterface      On a 4xx when $throw is true
+     * @throws ServerExceptionInterface      On a 5xx when $throw is true
+     */
+    public function toArray(bool $throw = true): array;
+
+    /**
      * Returns info coming from the transport layer.
      *
      * This method SHOULD NOT throw any ExceptionInterface and SHOULD be non-blocking.
@@ -67,13 +79,14 @@ interface ResponseInterface
      * another, as the request/response progresses.
      *
      * The following info MUST be returned:
-     *  - raw_headers - an array modelled after the special $http_response_header variable
+     *  - response_headers - an array modelled after the special $http_response_header variable
      *  - redirect_count - the number of redirects followed while executing the request
      *  - redirect_url - the resolved location of redirect responses, null otherwise
      *  - start_time - the time when the request was sent or 0.0 when it's pending
+     *  - http_method - the HTTP verb of the last request
      *  - http_code - the last response code or 0 when it is not known yet
      *  - error - the error message when the transfer was aborted, null otherwise
-     *  - data - the value of the "data" request option, null if not set
+     *  - user_data - the value of the "user_data" request option, null if not set
      *  - url - the last effective URL of the request
      *
      * When the "capture_peer_cert_chain" option is true, the "peer_certificate_chain"

@@ -4,6 +4,7 @@ UPGRADE FROM 4.x to 5.0
 BrowserKit
 ----------
 
+ * Removed `Client`, use `AbstractBrowser` instead
  * Removed the possibility to extend `Response` by making it final.
  * Removed `Response::buildHeader()`
  * Removed `Response::getStatus()`, use `Response::getStatusCode()` instead
@@ -14,7 +15,7 @@ Cache
 
  * Removed `CacheItem::getPreviousTags()`, use `CacheItem::getMetadata()` instead.
  * Removed all PSR-16 adapters, use `Psr16Cache` or `Symfony\Contracts\Cache\CacheInterface` implementations instead.
- * Removed `SimpleCacheAdapter`, use `Psr16Adapter instead.
+ * Removed `SimpleCacheAdapter`, use `Psr16Adapter` instead.
 
 Config
 ------
@@ -69,6 +70,25 @@ EventDispatcher
 ---------------
 
  * The `TraceableEventDispatcherInterface` has been removed.
+ * The signature of the `EventDispatcherInterface::dispatch()` method has been updated to `dispatch($event, string $eventName = null)`
+ * The `Event` class has been removed, use `Symfony\Contracts\EventDispatcher\Event` instead
+
+DependencyInjection
+-------------------
+
+ * Removed support for non-string default env() parameters
+
+   Before:
+   ```yaml
+   parameters:
+       env(NAME): 1.5
+   ```
+
+   After:
+   ```yaml
+   parameters:
+          env(NAME): '1.5'
+   ```
 
 Filesystem
 ----------
@@ -83,7 +103,7 @@ Finder
 
 Form
 ----
- 
+
  * Removed support for using the `format` option of `DateType` and `DateTimeType` when the `html5` option is enabled.
  * Using names for buttons that do not start with a letter, a digit, or an underscore leads to an exception.
  * Using names for buttons that do not contain only letters, digits, underscores, hyphens, and colons leads to an
@@ -199,11 +219,25 @@ HttpFoundation
 HttpKernel
 ----------
 
+ * Removed `Client`, use `HttpKernelBrowser` instead
  * The `Kernel::getRootDir()` and the `kernel.root_dir` parameter have been removed
  * The `KernelInterface::getName()` and the `kernel.name` parameter have been removed
  * Removed the first and second constructor argument of `ConfigDataCollector`
  * Removed `ConfigDataCollector::getApplicationName()`
  * Removed `ConfigDataCollector::getApplicationVersion()`
+ * Removed `FilterControllerArgumentsEvent`, use `ControllerArgumentsEvent` instead
+ * Removed `FilterControllerEvent`, use `ControllerEvent` instead
+ * Removed `FilterResponseEvent`, use `ResponseEvent` instead
+ * Removed `GetResponseEvent`, use `RequestEvent` instead
+ * Removed `GetResponseForControllerResultEvent`, use `ViewEvent` instead
+ * Removed `GetResponseForExceptionEvent`, use `ExceptionEvent` instead
+ * Removed `PostResponseEvent`, use `TerminateEvent` instead
+ * Removed `TranslatorListener` in favor of `LocaleAwareListener`
+
+Messenger
+---------
+
+ * The `LoggingMiddleware` class has been removed, pass a logger to `SendMessageMiddleware` instead.
 
 Monolog
 -------
@@ -241,8 +275,8 @@ Security
 --------
 
  * The `Role` and `SwitchUserRole` classes have been removed.
- * The `RoleHierarchyInterface` has been removed.
- * The `getReachableRoles()` method of the `RoleHierarchy` class has been removed.
+ * The `getReachableRoles()` method of the `RoleHierarchy` class has been removed. It has been replaced by the new
+   `getReachableRoleNames()` method.
  * The `getRoles()` method has been removed from the `TokenInterface`. It has been replaced by the new
    `getRoleNames()` method.
  * The `ContextListener::setLogoutOnUserChange()` method has been removed.
@@ -255,6 +289,8 @@ Security
  * `SimpleAuthenticatorInterface`, `SimpleFormAuthenticatorInterface`, `SimplePreAuthenticatorInterface`,
    `SimpleAuthenticationProvider`, `SimpleAuthenticationHandler`, `SimpleFormAuthenticationListener` and
    `SimplePreAuthenticationListener` have been removed. Use Guard instead.
+ * The `ListenerInterface` has been removed, turn your listeners into callables instead.
+ * The `Firewall::handleRequest()` method has been removed, use `Firewall::callListeners()` instead.
  * `\Serializable` interface has been removed from `AbstractToken` and `AuthenticationException`,
    thus `serialize()` and `unserialize()` aren't available.
    Use `getState()` and `setState()` instead.
@@ -350,6 +386,10 @@ Workflow
  * `add` method has been removed use `addWorkflow` method in `Workflow\Registry` instead.
  * `SupportStrategyInterface` has been removed, use `WorkflowSupportStrategyInterface` instead.
  * `ClassInstanceSupportStrategy` has been removed, use `InstanceOfSupportStrategy` instead.
+ * `MarkingStoreInterface::setMarking()` has a third argument: `array $context = []`.
+ * Removed support of `initial_place`. Use `initial_places` instead.
+ * `MultipleStateMarkingStore` has been removed.
+ * `SingleStateMarkingStore` has been removed.
 
 Yaml
 ----

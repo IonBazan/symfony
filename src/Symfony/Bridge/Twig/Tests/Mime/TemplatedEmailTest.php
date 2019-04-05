@@ -13,13 +13,24 @@ class TemplatedEmailTest extends TestCase
         $email->context($context = ['product' => 'Symfony']);
         $this->assertEquals($context, $email->getContext());
 
-        $email->template($template = 'full');
-        $this->assertEquals($template, $email->getTemplate());
-
         $email->textTemplate($template = 'text');
         $this->assertEquals($template, $email->getTextTemplate());
 
         $email->htmlTemplate($template = 'html');
         $this->assertEquals($template, $email->getHtmlTemplate());
+    }
+
+    public function testSerialize()
+    {
+        $email = (new TemplatedEmail())
+            ->textTemplate('text.txt.twig')
+            ->htmlTemplate('text.html.twig')
+            ->context($context = ['a' => 'b'])
+        ;
+
+        $email = unserialize(serialize($email));
+        $this->assertEquals('text.txt.twig', $email->getTextTemplate());
+        $this->assertEquals('text.html.twig', $email->getHtmlTemplate());
+        $this->assertEquals($context, $email->getContext());
     }
 }

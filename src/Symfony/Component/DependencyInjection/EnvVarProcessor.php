@@ -41,7 +41,8 @@ class EnvVarProcessor implements EnvVarProcessorInterface
             'int' => 'int',
             'json' => 'array',
             'key' => 'bool|int|float|string|array',
-            'nullable' => 'bool|int|float|string|array',
+            'url' => 'array',
+            'query_string' => 'array',
             'resolve' => 'string',
             'default' => 'bool|int|float|string|array',
             'string' => 'string',
@@ -84,15 +85,21 @@ class EnvVarProcessor implements EnvVarProcessorInterface
             $next = substr($name, $i + 1);
             $default = substr($name, 0, $i);
 
-            if (!$this->container->hasParameter($default)) {
+            if ('' !== $default && !$this->container->hasParameter($default)) {
                 throw new RuntimeException(sprintf('Invalid env fallback in "default:%s": parameter "%s" not found.', $name, $default));
             }
 
             try {
-                return $getEnv($next);
+                $env = $getEnv($next);
+
+                if ('' !== $env && null !== $env) {
+                    return $env;
+                }
             } catch (EnvNotFoundException $e) {
-                return $this->container->getParameter($default);
+                // no-op
             }
+
+            return '' === $default ? null : $this->container->getParameter($default);
         }
 
         if ('file' === $prefix) {
@@ -178,6 +185,37 @@ class EnvVarProcessor implements EnvVarProcessorInterface
             return $env;
         }
 
+        if ('url' === $prefix) {
+            $parsedEnv = parse_url($env);
+
+            if (false === $parsedEnv) {
+                throw new RuntimeException(sprintf('Invalid URL in env var "%s"', $name));
+            }
+            if (!isset($parsedEnv['scheme'], $parsedEnv['host'])) {
+                throw new RuntimeException(sprintf('Invalid URL env var "%s": schema and host expected, %s given.', $name, $env));
+            }
+            $parsedEnv += [
+                'port' => null,
+                'user' => null,
+                'pass' => null,
+                'path' => null,
+                'query' => null,
+                'fragment' => null,
+            ];
+
+            // remove the '/' separator
+            $parsedEnv['path'] = '/' === $parsedEnv['path'] ? null : substr($parsedEnv['path'], 1);
+
+            return $parsedEnv;
+        }
+
+        if ('query_string' === $prefix) {
+            $queryString = parse_url($env, PHP_URL_QUERY) ?: $env;
+            parse_str($queryString, $result);
+
+            return $result;
+        }
+
         if ('resolve' === $prefix) {
             return preg_replace_callback('/%%|%([^%\s]+)%/', function ($match) use ($name) {
                 if (!isset($match[1])) {
@@ -194,10 +232,6 @@ class EnvVarProcessor implements EnvVarProcessorInterface
 
         if ('csv' === $prefix) {
             return str_getcsv($env);
-        }
-
-        if ('nullable' === $prefix) {
-            return '' === $env ? null : $env;
         }
 
         if ('trim' === $prefix) {

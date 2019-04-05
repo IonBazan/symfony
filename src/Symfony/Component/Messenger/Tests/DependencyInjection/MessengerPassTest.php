@@ -20,6 +20,7 @@ use Symfony\Component\DependencyInjection\Reference;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 use Symfony\Component\Messenger\Command\ConsumeMessagesCommand;
 use Symfony\Component\Messenger\Command\DebugCommand;
+use Symfony\Component\Messenger\Command\SetupTransportsCommand;
 use Symfony\Component\Messenger\DataCollector\MessengerDataCollector;
 use Symfony\Component\Messenger\DependencyInjection\MessengerPass;
 use Symfony\Component\Messenger\Envelope;
@@ -251,6 +252,7 @@ class MessengerPassTest extends TestCase
         $container->register('console.command.messenger_consume_messages', ConsumeMessagesCommand::class)->setArguments([
             null,
             new Reference('messenger.receiver_locator'),
+            new Reference('messenger.retry_strategy_locator'),
             null,
             null,
             null,
@@ -262,7 +264,22 @@ class MessengerPassTest extends TestCase
         (new MessengerPass())->process($container);
 
         $this->assertSame(['amqp', 'dummy'], $container->getDefinition('console.command.messenger_consume_messages')->getArgument(3));
-        $this->assertSame(['message_bus'], $container->getDefinition('console.command.messenger_consume_messages')->getArgument(4));
+    }
+
+    public function testItSetsTheReceiverNamesOnTheSetupTransportsCommand()
+    {
+        $container = $this->getContainerBuilder();
+        $container->register('console.command.messenger_setup_transports', SetupTransportsCommand::class)->setArguments([
+            new Reference('messenger.receiver_locator'),
+            null,
+        ]);
+
+        $container->register(AmqpReceiver::class, AmqpReceiver::class)->addTag('messenger.receiver', ['alias' => 'amqp']);
+        $container->register(DummyReceiver::class, DummyReceiver::class)->addTag('messenger.receiver', ['alias' => 'dummy']);
+
+        (new MessengerPass())->process($container);
+
+        $this->assertSame(['amqp', 'dummy'], $container->getDefinition('console.command.messenger_setup_transports')->getArgument(1));
     }
 
     public function testItShouldNotThrowIfGeneratorIsReturnedInsteadOfArray()
@@ -595,14 +612,20 @@ class DummyHandler
 
 class DummyReceiver implements ReceiverInterface
 {
-    public function receive(callable $handler): void
+    public function get(): iterable
     {
-        for ($i = 0; $i < 3; ++$i) {
-            $handler(new Envelope(new DummyMessage("Dummy $i")));
-        }
+        yield new Envelope(new DummyMessage('Dummy'));
     }
 
     public function stop(): void
+    {
+    }
+
+    public function ack(Envelope $envelope): void
+    {
+    }
+
+    public function reject(Envelope $envelope): void
     {
     }
 }

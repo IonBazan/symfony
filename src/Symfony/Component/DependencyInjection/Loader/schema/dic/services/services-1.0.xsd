@@ -243,6 +243,7 @@
       <xsd:element name="argument" type="argument" maxOccurs="unbounded" />
     </xsd:choice>
     <xsd:attribute name="method" type="xsd:string" />
+    <xsd:attribute name="returns-clone" type="boolean" />
   </xsd:complexType>
 
   <xsd:simpleType name="parameter_type">
@@ -264,6 +265,7 @@
       <xsd:enumeration value="iterator" />
       <xsd:enumeration value="service_locator" />
       <xsd:enumeration value="tagged" />
+      <xsd:enumeration value="tagged_locator" />
     </xsd:restriction>
   </xsd:simpleType>
 
