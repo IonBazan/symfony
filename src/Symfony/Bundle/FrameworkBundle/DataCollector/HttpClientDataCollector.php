@@ -15,6 +15,10 @@ use Symfony\Bundle\FrameworkBundle\HttpClient\TraceableHttpClient;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\DataCollector\DataCollector;
+use Symfony\Component\VarDumper\Caster\CutStub;
+use Symfony\Component\VarDumper\Cloner\ClonerInterface;
+use Symfony\Component\VarDumper\Cloner\Data;
+use Symfony\Component\VarDumper\Cloner\VarCloner;
 use Symfony\Contracts\HttpClient\HttpClientInterface;
 
 /**
@@ -23,6 +27,11 @@ use Symfony\Contracts\HttpClient\HttpClientInterface;
 class HttpClientDataCollector extends DataCollector
 {
     protected $httpClient;
+
+    /**
+     * @var ClonerInterface
+     */
+    private $cloner;
 
     public function __construct(HttpClientInterface $httpClient = null)
     {
@@ -36,7 +45,37 @@ class HttpClientDataCollector extends DataCollector
     {
         if ($this->httpClient instanceof TraceableHttpClient) {
             $this->data['traces'] = $this->httpClient->getTraces();
+            foreach ($this->data['traces'] as $key => $trace) {
+                $this->data['traces'][$key]['request']['options'] = $this->cloneVar($trace['request']['options']);
+            }
         }
+    }
+
+    /**
+     * Converts the variable into a serializable Data instance.
+     *
+     * This array can be displayed in the template using
+     * the VarDumper component.
+     *
+     * @param mixed $var
+     *
+     * @return Data
+     */
+    protected function cloneVar($var)
+    {
+        if ($var instanceof Data) {
+            return $var;
+        }
+        if (null === $this->cloner) {
+            if (!class_exists(CutStub::class)) {
+                throw new \LogicException(sprintf('The VarDumper component is needed for the %s() method. Install symfony/var-dumper version 3.4 or above.', __METHOD__));
+            }
+            $this->cloner = new VarCloner();
+            $this->cloner->setMaxItems(-1);
+            $this->cloner->addCasters($this->getCasters());
+        }
+
+        return $this->cloner->cloneVar($var);
     }
 
     public function getTraces(): array

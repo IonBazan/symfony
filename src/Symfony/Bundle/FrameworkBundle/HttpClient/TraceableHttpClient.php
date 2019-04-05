@@ -36,21 +36,27 @@ class TraceableHttpClient implements HttpClientInterface
      */
     public function request(string $method, string $url, array $options = []): ResponseInterface
     {
-        $response = $this->httpClient->request($method, $url, $options);
+        $onProgress = $options['on_progress'] ?? static function () {};
+        $redirectCount = -1;
+        $traceableOptions['on_progress'] = function (int $dlNow, int $dlSize, array $info) use ($method, $url, $options, $onProgress, &$redirectCount) {
+            $onProgress($dlNow, $dlSize, $info);
+            if ($redirectCount !== $info['redirect_count'] && $info['http_code'] !== 0) {
+                $redirectCount = $info['redirect_count'];
+                $this->addTrace([
+                    'request' => [
+                        'method' => $method,
+                        'url' => $url,
+                        'options' => $options,
+                    ],
+                    'response' => [
+                        'statusCode' => $info['http_code'],
+                        'headers' => $info['response_headers'],
+                    ],
+                ]);
+            }
+        };
 
-        $this->traces[] = [
-            'request' => [
-                'method' => $method,
-                'url' => $url,
-                'options' => $options,
-            ],
-            'response' => [
-                'statusCode' => $response->getStatusCode(),
-                'headers' => $response->getHeaders(false),
-            ],
-        ];
-
-        return $response;
+        return $this->httpClient->request($method, $url, $traceableOptions);
     }
 
     /**
@@ -64,5 +70,10 @@ class TraceableHttpClient implements HttpClientInterface
     public function getTraces(): array
     {
         return $this->traces;
+    }
+
+    public function addTrace(array $trace): void
+    {
+        $this->traces[] = $trace;
     }
 }

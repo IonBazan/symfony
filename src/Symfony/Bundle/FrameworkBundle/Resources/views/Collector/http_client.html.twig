@@ -3,7 +3,7 @@
 {% block toolbar %}
     {% if collector.traces|length %}
         {% set icon %}
-            {{ include('@WebProfiler/Icon/memory.svg') }}
+            {{ include('@Framework/Icon/http-client.svg') }}
             {% set status_color = '' %}
             <span class="sf-toolbar-value">{{ collector.traces|length }}</span>
         {% endset %}
@@ -14,7 +14,7 @@
 
 {% block menu %}
 <span class="label {{ collector.traces is empty ? 'disabled' }}">
-    <span class="icon">{{ include('@WebProfiler/Icon/memory.svg') }}</span>
+    <span class="icon">{{ include('@Framework/Icon/http-client.svg') }}</span>
     <strong>HTTP Client</strong>
 </span>
 {% endblock %}
@@ -25,38 +25,14 @@
         <table>
             <thead>
                 <tr>
-                    <th colspan="2">{{ trace.request.method }} {{ trace.request.url }}</th>
+                    <th colspan="2">
+                        <span class="label">{{ trace.request.method }}</span> {{ trace.request.url }}
+                    </th>
                 </tr>
             </thead>
             <tbody>
                 <tr>
-                    <th>Method</th>
-                    <td>
-                        {{ trace.request.method }}
-                    </td>
-                </tr>
-                <tr>
-                    <th>URL</th>
-                    <td>
-                        {{ trace.request.url }}
-                    </td>
-                </tr>
-                <tr>
-                    <th>Options</th>
-                    <td>
-                        {{ trace.request.options is empty ? 'none' : profiler_dump(trace.request.options, maxDepth=1) }}
-                    </td>
-                </tr>
-            </tbody>
-            <tbody>
-                <thead>
-                    <tr>
-                        <th colspan="2">Response</th>
-                    </tr>
-                </thead>
-                <tbody>
-                <tr>
-                    <th>Status Code</th>
+                    <th nowrap>Response Status Code</th>
                     <td>
                         {% if trace.response.statusCode >= 500 %}
                             {% set responseStatus = 'error' %}
@@ -68,6 +44,20 @@
                         <span class="label status-{{ responseStatus }}">
                             {{ trace.response.statusCode }}
                         </span>
+                    </td>
+                </tr>
+                <tr>
+                    <th nowrap>Response Headers</th>
+                    <td>
+                        {% for header in trace.response.headers %}
+                            <div>{{ header }}</div>
+                        {% endfor %}
+                    </td>
+                </tr>
+                <tr>
+                    <th nowrap>Options</th>
+                    <td>
+                        {{ trace.request.options is empty ? 'none' : profiler_dump(trace.request.options, maxDepth=1) }}
                     </td>
                 </tr>
             </tbody>
