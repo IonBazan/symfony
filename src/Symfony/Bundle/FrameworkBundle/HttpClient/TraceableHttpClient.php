@@ -18,7 +18,7 @@ use Symfony\Contracts\HttpClient\ResponseStreamInterface;
 /**
  * @author Jérémy Romey <jeremy@free-agent.fr>
  */
-class TraceableHttpClient implements HttpClientInterface
+final class TraceableHttpClient implements HttpClientInterface
 {
     protected $httpClient;
     protected $traces = [];

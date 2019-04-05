@@ -24,7 +24,7 @@ use Symfony\Contracts\HttpClient\HttpClientInterface;
 /**
  * @author Jérémy Romey <jeremy@free-agent.fr>
  */
-class HttpClientDataCollector extends DataCollector
+final class HttpClientDataCollector extends DataCollector
 {
     protected $httpClient;
 
