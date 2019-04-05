@@ -40,7 +40,7 @@ final class TraceableHttpClient implements HttpClientInterface
         $redirectCount = -1;
         $traceableOptions['on_progress'] = function (int $dlNow, int $dlSize, array $info) use ($method, $url, $options, $onProgress, &$redirectCount) {
             $onProgress($dlNow, $dlSize, $info);
-            if ($redirectCount !== $info['redirect_count'] && $info['http_code'] !== 0) {
+            if ($redirectCount !== $info['redirect_count'] && 0 !== $info['http_code']) {
                 $redirectCount = $info['redirect_count'];
                 $this->addTrace([
                     'request' => [
