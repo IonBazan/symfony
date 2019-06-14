@@ -1824,11 +1824,12 @@ class FrameworkExtension extends Extension
                 ->setArguments([new Reference('http_client'), [$scope => $scopeConfig], $scope]);
 
             if ($debug) {
-                $definition = $definition = $container->getDefinition($name);
+                $definition = $container->getDefinition($name);
                 $traceableDefinition = new Definition(TraceableHttpClient::class);
                 $traceableDefinition->setArguments([new Reference($innerId = $name.'.inner')]);
                 $traceableDefinition->setPublic($definition->isPublic());
                 $definition->setPublic(false);
+                $definition->replaceArgument(0, new Reference('debug.http_client.inner'));
                 $container->setDefinition($innerId, $definition);
                 $container->setDefinition($name, $traceableDefinition);
 
