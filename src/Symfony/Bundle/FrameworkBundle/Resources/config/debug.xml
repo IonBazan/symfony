@@ -29,5 +29,9 @@
             <tag name="controller.argument_value_resolver" priority="-200" />
             <argument />
         </service>
+
+        <service id="debug.http_client" class="Symfony\Component\HttpClient\TraceableHttpClient" decorates="http_client">
+            <argument type="service" id="debug.http_client.inner" />
+        </service>
     </services>
 </container>

@@ -54,9 +54,12 @@
             <tag name="data_collector" template="@WebProfiler/Collector/router.html.twig" id="router" priority="285" />
         </service>
 
-        <service id="data_collector.http_client" class="Symfony\Bundle\FrameworkBundle\DataCollector\HttpClientDataCollector">
-            <argument type="service" id="Symfony\Contracts\HttpClient\HttpClientInterface" on-invalid="ignore" />
-            <tag name="data_collector" template="@Framework/Collector/http_client.html.twig" id="http_client" priority="240" />
+        <service id="data_collector.http_client" class="Symfony\Component\HttpClient\DataCollector\HttpClientDataCollector">
+            <call method="addClient">
+                <argument>http_client</argument>
+                <argument type="service" id="debug.http_client" />
+            </call>
+            <tag name="data_collector" template="@WebProfiler/Collector/http_client.html.twig" id="http_client" priority="240" />
         </service>
     </services>
 </container>

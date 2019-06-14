@@ -62,6 +62,7 @@ use Symfony\Component\Form\FormTypeGuesserInterface;
 use Symfony\Component\Form\FormTypeInterface;
 use Symfony\Component\HttpClient\Psr18Client;
 use Symfony\Component\HttpClient\ScopingHttpClient;
+use Symfony\Component\HttpClient\TraceableHttpClient;
 use Symfony\Component\HttpKernel\CacheClearer\CacheClearerInterface;
 use Symfony\Component\HttpKernel\CacheWarmer\CacheWarmerInterface;
 use Symfony\Component\HttpKernel\Controller\ArgumentValueResolverInterface;
@@ -1800,12 +1801,16 @@ class FrameworkExtension extends Extension
     {
         $loader->load('http_client.xml');
 
+        $debug = $container->getParameter('kernel.debug');
+
         $container->getDefinition('http_client')->setArguments([$config['default_options'] ?? [], $config['max_host_connections'] ?? 6]);
 
         if (!$hasPsr18 = interface_exists(ClientInterface::class)) {
             $container->removeDefinition('psr18.http_client');
             $container->removeAlias(ClientInterface::class);
         }
+
+        $collectorDefinition = $container->getDefinition('data_collector.http_client');
 
         foreach ($config['scoped_clients'] as $name => $scopeConfig) {
             if ('http_client' === $name) {
@@ -1817,6 +1822,18 @@ class FrameworkExtension extends Extension
 
             $container->register($name, ScopingHttpClient::class)
                 ->setArguments([new Reference('http_client'), [$scope => $scopeConfig], $scope]);
+
+            if ($debug) {
+                $definition = $definition = $container->getDefinition($name);
+                $traceableDefinition = new Definition(TraceableHttpClient::class);
+                $traceableDefinition->setArguments([new Reference($innerId = $name.'.inner')]);
+                $traceableDefinition->setPublic($definition->isPublic());
+                $definition->setPublic(false);
+                $container->setDefinition($innerId, $definition);
+                $container->setDefinition($name, $traceableDefinition);
+
+                $collectorDefinition->addMethodCall('addClient', [$name, new Reference($name)]);
+            }
 
             $container->registerAliasForArgument($name, HttpClientInterface::class);
 

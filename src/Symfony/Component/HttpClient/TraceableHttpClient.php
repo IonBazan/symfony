@@ -9,7 +9,7 @@
  * file that was distributed with this source code.
  */
 
-namespace Symfony\Bundle\FrameworkBundle\HttpClient;
+namespace Symfony\Component\HttpClient;
 
 use Symfony\Contracts\HttpClient\HttpClientInterface;
 use Symfony\Contracts\HttpClient\ResponseInterface;
@@ -20,7 +20,14 @@ use Symfony\Contracts\HttpClient\ResponseStreamInterface;
  */
 final class TraceableHttpClient implements HttpClientInterface
 {
+    /**
+     * @var HttpClientInterface
+     */
     protected $httpClient;
+
+    /**
+     * @var array
+     */
     protected $traces = [];
 
     /**
@@ -64,7 +71,7 @@ final class TraceableHttpClient implements HttpClientInterface
      */
     public function stream($responses, float $timeout = null): ResponseStreamInterface
     {
-        $this->httpClient->stream($responses, $timeout);
+        return $this->httpClient->stream($responses, $timeout);
     }
 
     public function getTraces(): array

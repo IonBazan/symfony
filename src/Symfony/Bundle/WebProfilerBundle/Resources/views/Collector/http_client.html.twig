@@ -1,0 +1,104 @@
+{% extends '@WebProfiler/Profiler/layout.html.twig' %}
+
+{% block toolbar %}
+    {% if collector.requestCount %}
+        {% set icon %}
+            {{ include('@WebProfiler/Icon/http-client.svg') }}
+            {% set status_color = '' %}
+            <span class="sf-toolbar-value">{{ collector.requestCount }}</span>
+        {% endset %}
+
+        {{ include('@WebProfiler/Profiler/toolbar_item.html.twig', { link: profiler_url, status: status_color }) }}
+    {% endif %}
+{% endblock %}
+
+{% block menu %}
+<span class="label {{ collector.requestCount == 0 ? 'disabled' }}">
+    <span class="icon">{{ include('@WebProfiler/Icon/http-client.svg') }}</span>
+    <strong>HTTP Client</strong>
+    {% if collector.requestCount %}
+        <span class="count">
+            {{ collector.requestCount }}
+        </span>
+    {% endif %}
+</span>
+{% endblock %}
+
+{% block panel %}
+    <h2>HTTP Client</h2>
+    {% if collector.requestCount == 0 %}
+        <div class="empty">
+            <p>No HTTP requests were made.</p>
+        </div>
+    {% else %}
+        <div class="metrics">
+            <div class="metric">
+                <span class="value">{{ collector.requestCount }}</span>
+                <span class="label">Total requests</span>
+            </div>
+            <div class="metric">
+                <span class="value">{{ collector.errors }}</span>
+                <span class="label">Total errors</span>
+            </div>
+        </div>
+        <h2>Clients</h2>
+        <div class="sf-tabs">
+            {% for name, client in collector.clients %}
+                <div class="tab {{ client.traces|length == 0 ? 'disabled' }}">
+                    <h3 class="tab-title">{{ name }} <span class="badge">{{ client.traces|length }}</span></h3>
+                    <div class="tab-content">
+                        {% if client.traces|length == 0 %}
+                            <div class="empty">
+                                <p>No requests were made for {{ name }} client.</p>
+                            </div>
+                        {% else %}
+                            <h4>Requests</h4>
+                            {% for trace in client.traces %}
+                                <table>
+                                    <thead>
+                                    <tr>
+                                        <th colspan="2">
+                                            <span class="label">{{ trace.request.method }}</span>&nbsp;{{ trace.request.url }}
+                                        </th>
+                                    </tr>
+                                    </thead>
+                                    <tbody>
+                                    <tr>
+                                        <th nowrap>Response Status Code</th>
+                                        <td>
+                                            {% if trace.response.statusCode >= 500 %}
+                                                {% set responseStatus = 'error' %}
+                                            {% elseif trace.response.statusCode >= 400 %}
+                                                {% set responseStatus = 'warning' %}
+                                            {% else %}
+                                                {% set responseStatus = 'success' %}
+                                            {% endif %}
+                                            <span class="label status-{{ responseStatus }}">
+                                {{ trace.response.statusCode }}
+                            </span>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <th nowrap>Response Headers</th>
+                                        <td>
+                                            {% for header in trace.response.headers %}
+                                                <div>{{ header }}</div>
+                                            {% endfor %}
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <th nowrap>Options</th>
+                                        <td>
+                                            {{ trace.request.options is empty ? 'none' : profiler_dump(trace.request.options, maxDepth=1) }}
+                                        </td>
+                                    </tr>
+                                    </tbody>
+                                </table>
+                            {% endfor %}
+                        {% endif %}
+                    </div>
+                </div>
+            {% endfor %}
+        {% endif %}
+    </div>
+{% endblock %}

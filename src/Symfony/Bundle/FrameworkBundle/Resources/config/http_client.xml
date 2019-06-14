@@ -20,9 +20,5 @@
             <argument type="service" id="http_client" />
         </service>
         <service id="Psr\Http\Client\ClientInterface" alias="psr18.http_client" />
-
-        <service id="traceable_http_client" class="Symfony\Bundle\FrameworkBundle\HttpClient\TraceableHttpClient" decorates="Symfony\Contracts\HttpClient\HttpClientInterface">
-            <argument type="service" id="traceable_http_client.inner" />
-        </service>
     </services>
 </container>
